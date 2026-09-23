@@ -21,7 +21,7 @@ tar -xzf "$SRC_TARBALL" -C "$BUILD_DIR"
 cd "$BUILD_DIR/aria2"
 
 # ================================================================
-# 2. 工具链（MSYS2 MINGW64 下 gcc 本身即 x86_64-w64-mingw32 交叉编译器）
+# 2. 工具链
 # ================================================================
 export CC=gcc
 export CXX=g++
@@ -31,20 +31,19 @@ export NM=gcc-nm
 
 # ================================================================
 # 3. 编译与链接配置
-#    - LTO 和完全静态链接
-#    - 显式定义 CARES_STATICLIB 修复 c-ares 静态链接
 # ================================================================
 export CFLAGS="-O2 -flto=auto -ffat-lto-objects -DCARES_STATICLIB"
 export CXXFLAGS="$CFLAGS"
 export LDFLAGS="-flto=auto -static -static-libgcc -static-libstdc++"
 
-# 关键：确保 pkg-config 在链接时输出静态库标志
 export PKG_CONFIG="pkg-config --static"
 
 # ================================================================
 # 4. 配置 aria2
+#    --disable-dependency-tracking: 绕过 MSYS2 下的依赖跟踪引导问题
 # ================================================================
 ARIA2_STATIC=yes ./configure \
+  --disable-dependency-tracking \
   --without-gnutls \
   --with-openssl \
   --with-libexpat \

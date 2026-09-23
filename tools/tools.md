@@ -1,31 +1,5 @@
 # 工具使用方法
 
-## 文档报告生成
-
-```sh
-# 创建、激活、退出虚拟环境
-python3 -m venv .venv
-source .venv/bin/activate
-# deactivate 
-
-# 安装依赖
-pip install openpyxl        # generate_xlsx.py 必选
-pip install pyyaml          # 可选，仅硬件信息使用 YAML 文件时需要
-
-cd office_generate
-
-# 1) mdbook 的 markdown 转换成 quarto 支持，然后转换成 word
-python3 gen_md2quarto.py quick-start.md          # 生成 quick-start-quarto.md
-python3 gen_md2quarto.py ./some-docs-dir         # 递归转换目录下所有 *.md
-quarto render quick-start-quarto.md --to docx
-
-# 2) 根据基准测试日志 (*.log) 生成 xlsx 汇总报表
-#    自动识别日志目录下 Throughput*.log / latency*.log / Online_serve*.log，不硬编码测试数据
-python3 generate_xlsx.py --log-dir ../../log/qwen3.8-27B-w8a8/log
-# 输出默认 <log-dir>/bench-results.xlsx，可用 --output 指定路径，-h 查看全部参数
-# https://docs.vllm.ai/projects/ascend/zh-cn/main/tutorials/models/Qwen3.8-27B.html
-```
-
 ## 模型权重下载
 
 ```sh

@@ -36,7 +36,7 @@ jobs:
       - name: Prepare source bundle
         run: bash tools/build-aria2c/prep-source.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: aria2-src
           path: aria2-src.tar.gz
@@ -78,7 +78,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: aria2-linux-${{ matrix.arch }}
           path: dist/*.tar.gz
@@ -115,7 +115,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: aria2-macos-${{ matrix.arch }}
           path: dist/*.tar.gz
@@ -152,7 +152,7 @@ jobs:
         shell: msys2 {0}
         run: bash tools/build-aria2c/build-windows.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: aria2-windows-x86_64
           path: dist/*.zip

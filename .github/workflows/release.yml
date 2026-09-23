@@ -9,13 +9,20 @@ on:
   workflow_dispatch:
     inputs:
       aria2_ref:
-        description: 'aria2 源码 ref（tag / 分支）'
+        description: 'aria2 上游源码 ref（如 release-1.37.0 或 master）'
         required: true
-        default: 'master'
+        default: 'release-1.37.0'
+      release_tag:
+        description: '为本仓库创建的 release tag（如 v0.0.1）'
+        required: true
+        default: 'v0.0.1'
 
 env:
   ARIA2_REPO: https://github.com/aria2/aria2.git
-  ARIA2_REF: ${{ github.event.inputs.aria2_ref || github.ref_name || 'master' }}
+  # aria2 上游 ref：手动触发时用输入；tag push 时用固定默认值（不要用 github.ref_name！）
+  ARIA2_REF: ${{ github.event.inputs.aria2_ref || 'release-1.37.0' }}
+  # 本仓库的 release tag：tag push 用触发 tag；手动触发用输入
+  RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
 
 jobs:
   # ==================================================================
@@ -34,6 +41,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             autoconf automake autopoint libtool gettext pkg-config
+
+      - name: Show resolved refs
+        run: |
+          echo "ARIA2_REF   = $ARIA2_REF"
+          echo "RELEASE_TAG = $RELEASE_TAG"
 
       - name: Prepare source bundle
         run: bash tools/build-aria2c/prep-source.sh
@@ -186,6 +198,8 @@ jobs:
 
       - uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
           files: release-assets/*
           generate_release_notes: true
           draft: false

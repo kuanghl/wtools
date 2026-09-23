@@ -1,47 +1,44 @@
 #!/usr/bin/env bash
-# 只执行一次：下载 aria2 源码 + autoreconf -i + 打包为 aria2-src.tar.gz
+# 下载 aria2 上游源码 + autoreconf -i + 打包为 aria2-src.tar.gz
+# 注意：ARIA2_REF 是 aria2 上游源码的 ref，与本仓库 tag 无关
 set -euo pipefail
 
 ARIA2_REPO="${ARIA2_REPO:-https://github.com/aria2/aria2.git}"
-ARIA2_REF="${ARIA2_REF:-master}"
+ARIA2_REF="${ARIA2_REF:-release-1.37.0}"
+
+# 归一去 refs/ 前缀（防止传入 refs/tags/xxx）
+ARIA2_REF="${ARIA2_REF#refs/tags/}"
+ARIA2_REF="${ARIA2_REF#refs/heads/}"
 
 WORK_DIR="$(pwd)/.src-work"
-rm -rf "$WORK_DIR"
+rm -rf "$WORK_DIR" aria2-src.tar.gz
 mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
 
-# ================================================================
-# 用 codeload tarball，不走完整 git clone
-# 优点：体积更小（不含 .git）、下载更快、不受 --depth 限制
-# ================================================================
-# 归一化 ref：去掉可能存在的 refs/tags/ 前缀
-REF="${ARIA2_REF#refs/tags/}"
-REF="${REF#refs/heads/}"
+echo "==> ARIA2_REF = $ARIA2_REF"
 
-TARBALL_URL="https://github.com/aria2/aria2/archive/${REF}.tar.gz"
-echo "==> Downloading $TARBALL_URL"
+# 优先使用 codeload tarball
+TARBALL_URL="https://github.com/aria2/aria2/archive/${ARIA2_REF}.tar.gz"
+echo "==> Trying tarball: $TARBALL_URL"
 
-if ! curl -fL --retry 3 --retry-delay 5 -o aria2.tar.gz "$TARBALL_URL"; then
-  echo "==> tarball not found, fallback to git clone"
-  git clone --depth 1 --branch "$ARIA2_REF" "$ARIA2_REPO" aria2
+if curl -fL --retry 3 --retry-delay 5 -o aria2.tar.gz "$TARBALL_URL"; then
+  tar -xzf aria2.tar.gz
+  EXTRACTED="$(find . -maxdepth 1 -type d -name 'aria2-*' ! -name 'aria2.tar.gz' | head -n1)"
+  if [ -z "$EXTRACTED" ]; then
+    echo "Error: extracted directory not found"; exit 1
+  fi
+  mv "$EXTRACTED" aria2
   cd aria2
 else
-  tar -xzf aria2.tar.gz
-  # codeload 解压后的目录名形如 aria2-<ref>
-  EXTRACTED="$(find . -maxdepth 1 -type d -name 'aria2-*' | head -n1)"
-  mv "$EXTRACTED" aria2
+  echo "==> Tarball failed, fallback to git clone"
+  git clone --depth 1 --branch "$ARIA2_REF" "$ARIA2_REPO" aria2
   cd aria2
 fi
 
-# ================================================================
-# autoreconf：生成 configure / Makefile.in
-# 这一步在各平台重复执行完全等价，所以只做一次
-# ================================================================
+# 生成 configure / Makefile.in
 autoreconf -i
 
-# ================================================================
-# 打包回上层目录，供 upload-artifact 使用
-# ================================================================
+# 打包
 cd ..
 tar czf ../aria2-src.tar.gz aria2
 

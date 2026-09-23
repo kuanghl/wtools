@@ -128,9 +128,14 @@ pip install -r requirements.txt
 3. 测试指南
 
 ```sh
-python3 -m venv --system-site-packages /workspace/guidellm-venv
-source /workspace/guidellm-venv/bin/activate
-pip install "numpy==1.26.4"
-pip install "guidellm[recommended]==0.7.3"
+# 创建独立虚拟环境（推荐，避免依赖冲突）
+python3 -m venv guidellm-env
+source guidellm-env/bin/activate
+
+# 安装 GuideLLM 及推荐依赖
+pip install "guidellm[recommended]"
+
+# 验证安装
+guidellm --version
 ```
 

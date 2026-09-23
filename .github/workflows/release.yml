@@ -25,7 +25,7 @@ jobs:
     outputs:
       src-artifact: aria2-src
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install autotools
         run: |
@@ -58,7 +58,7 @@ jobs:
             arch: aarch64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download prepared source
         uses: actions/download-artifact@v4
@@ -99,7 +99,7 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download prepared source
         uses: actions/download-artifact@v4
@@ -128,7 +128,7 @@ jobs:
     needs: prep-source
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download prepared source
         uses: actions/download-artifact@v4

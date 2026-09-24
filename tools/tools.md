@@ -128,6 +128,9 @@ pip install -r requirements.txt
 3. 测试指南
 
 ```sh
+# llm-inference-bench: https://github.com/local-inference-lab/llm-inference-bench.git
+# llmperf: https://github.com/TrelisResearch/llmperf.git
+
 # 创建独立虚拟环境（推荐，避免依赖冲突）
 python3 -m venv guidellm-env
 source guidellm-env/bin/activate
@@ -137,5 +140,15 @@ pip install "guidellm[recommended]"
 
 # 验证安装
 guidellm --version
+
+# 简单测试
+guidellm benchmark \
+  --backend kind=openai_http,target=http://localhost:8000 \
+  --model Qwen3.8-27B \
+  --profile kind=sweep \
+  --data "kind=synthetic_text,prompt_tokens=4096,output_tokens=4096" \
+  --max-seconds 60 \
+  --output kind=json,path=/tmp/guidellm/benchmark.json \
+  --output kind=csv,path=/tmp/guidellm/benchmark.csv
 ```
 

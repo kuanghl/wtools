@@ -85,18 +85,29 @@ skopeo list-tags docker://quay.io/ascend/vllm-omni
 curl -s "https://harbor.baai.ac.cn/api/v2.0/projects/flagrelease-public/repositories?page_size=100" | jq -r '.[].name'
 ```
 
-## llm-test
+## 大模型测试工具
 
 1. 脚本工具
 
 ```sh
-# 不同模型的测试脚本及测试方法
-# 根据其目录下的README.md文档实施
+cd basic-tests
 
 # 通用软件环境检查（检查项在 CHECK_LIST 列表维护，可自由增删；--step 单项执行）
 bash env_check.sh
 bash env_check.sh --step python,lmcache
-bash env_check.sh --import      # Python 包追加真实 import 校验（默认只查 pip 元数据，快）
+bash env_check.sh --import
+
+# 主机环境获取
+bash host_info_dump.sh
+
+# vllm ai api检查，模型推理需先启动
+bash vllm_api_test.sh
+
+# vllm serve bench测试，模型推理需先启动
+bash vllm_bench_test.sh
+
+# guidellm bench测试，模型推理需先启动
+bash vllm_bench_test.sh
 ```
 
 2. 量化指南
@@ -151,4 +162,3 @@ guidellm benchmark \
   --output kind=json,path=/tmp/guidellm/benchmark.json \
   --output kind=csv,path=/tmp/guidellm/benchmark.csv
 ```
-

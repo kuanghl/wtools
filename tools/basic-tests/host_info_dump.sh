@@ -116,14 +116,30 @@ collect_disk() {
 }
 
 # 只保留已联网的物理网卡
+#   过滤规则（顺序很重要）:
+#     1) 排除回环 / 虚拟 / 容器网卡
+#     2) operstate 必须为 up（链路未起的不采）
+#     3) 再读 carrier，确认为 1（规避内核在 down 时读 carrier 报 Invalid argument）
+#     4) 至少存在一个 IPv4 地址
 #   输出格式: 网卡@IP@MAC，多块以分号分隔
 collect_network() {
-    local result="" first=1 iface ip mac
+    local result="" first=1 iface ip mac oper carrier
+
     while IFS= read -r iface; do
+        # 1) 过滤虚拟/容器/环回
         case "$iface" in
             lo|docker*|veth*|br-*|virbr*|tun*|tap*|cni*|flannel*|cali*|kube*) continue ;;
         esac
 
+        # 2) 必须先判断 operstate，避免链路 down 时读 carrier 报错
+        oper="$(cat "/sys/class/net/$iface/operstate" 2>/dev/null)"
+        [ "$oper" = "up" ] || continue
+
+        # 3) 确认 carrier=1（物理链路真正 up）
+        carrier="$(cat "/sys/class/net/$iface/carrier" 2>/dev/null)"
+        [ "$carrier" = "1" ] || continue
+
+        # 4) 必须至少有一个 IPv4
         ip="$(safe_cmd ip -4 -o addr show dev "$iface" \
                 | awk '{print $4}' | paste -sd ',' -)"
         [ -z "$ip" ] && continue
@@ -226,64 +242,76 @@ ascend_driver_version() {
 # CANN 版本号
 #   取值优先级：
 #     1) $ASCEND_TOOLKIT_HOME 下的 version.cfg / ascend_toolkit_install.info
-#     2) /usr/local/Ascend/ascend-toolkit/latest/...
-#     3) /usr/local/Ascend/cann/<arch>-linux/ascend_toolkit_install.info
-#     4) find 兜底搜索 ascend_toolkit_install.info
-#     5) pip3 show ascend-toolkit
+#     2) /usr/local/Ascend/cann 下的 version.cfg / version.info /
+#        ascend_toolkit_install.info（含 aarch64-linux / x86_64-linux / arm64-linux 子目录）
+#     3) /usr/local/Ascend/ascend-toolkit/latest/ 老布局
+#     4) 目录名兜底 /usr/local/Ascend/cann-<版本>（例如 cann-9.1.1）
+#     5) find 兜底搜索 ascend_toolkit_install.info
+#     6) pip3 show ascend-toolkit
 ascend_cann_version() {
-    local v="" base f arch_dir
+    local v="" f d
 
     # 1) 优先看环境变量 ASCEND_TOOLKIT_HOME
     if [ -n "${ASCEND_TOOLKIT_HOME:-}" ]; then
         for f in \
             "$ASCEND_TOOLKIT_HOME/version.cfg" \
+            "$ASCEND_TOOLKIT_HOME/version.info" \
             "$ASCEND_TOOLKIT_HOME/ascend_toolkit_install.info" \
             "$ASCEND_TOOLKIT_HOME/aarch64-linux/ascend_toolkit_install.info" \
-            "$ASCEND_TOOLKIT_HOME/x86_64-linux/ascend_toolkit_install.info"; do
+            "$ASCEND_TOOLKIT_HOME/x86_64-linux/ascend_toolkit_install.info" \
+            "$ASCEND_TOOLKIT_HOME/arm64-linux/ascend_toolkit_install.info"; do
             if [ -r "$f" ]; then
-                v="$(grep -iE '^version=' "$f" | head -1 \
+                v="$(grep -iE '^version *=' "$f" | head -1 \
                     | awk -F= '{gsub(/ /,"",$2); print $2}')"
                 [ -n "$v" ] && { echo "$v"; return; }
             fi
         done
     fi
 
-    # 2) 常见安装路径
-    for base in /usr/local/Ascend /usr/local/Ascend/ascend-toolkit; do
-        for f in \
-            "$base/ascend-toolkit/latest/version.cfg" \
-            "$base/ascend-toolkit/latest/ascend_toolkit_install.info" \
-            "$base/latest/version.cfg" \
-            "$base/latest/ascend_toolkit_install.info"; do
-            if [ -r "$f" ]; then
-                v="$(grep -iE '^version=' "$f" | head -1 \
-                    | awk -F= '{gsub(/ /,"",$2); print $2}')"
-                [ -n "$v" ] && { echo "$v"; return; }
-            fi
-        done
-    done
-
-    # 3) /usr/local/Ascend/cann/<arch>-linux/ 安装信息
-    for arch_dir in aarch64-linux x86_64-linux; do
-        f="/usr/local/Ascend/cann/$arch_dir/ascend_toolkit_install.info"
+    # 2) CANN 9.x 新布局：/usr/local/Ascend/cann/...
+    for f in \
+        /usr/local/Ascend/cann/version.cfg \
+        /usr/local/Ascend/cann/version.info \
+        /usr/local/Ascend/cann/ascend_toolkit_install.info \
+        /usr/local/Ascend/cann/aarch64-linux/ascend_toolkit_install.info \
+        /usr/local/Ascend/cann/x86_64-linux/ascend_toolkit_install.info \
+        /usr/local/Ascend/cann/arm64-linux/ascend_toolkit_install.info; do
         if [ -r "$f" ]; then
-            v="$(grep -iE '^version=' "$f" | head -1 \
+            v="$(grep -iE '^version *=' "$f" | head -1 \
                 | awk -F= '{gsub(/ /,"",$2); print $2}')"
             [ -n "$v" ] && { echo "$v"; return; }
         fi
     done
 
-    # 4) find 兜底
+    # 3) 老布局：/usr/local/Ascend/ascend-toolkit/latest/...
+    for f in \
+        /usr/local/Ascend/ascend-toolkit/latest/version.cfg \
+        /usr/local/Ascend/ascend-toolkit/latest/ascend_toolkit_install.info; do
+        if [ -r "$f" ]; then
+            v="$(grep -iE '^version *=' "$f" | head -1 \
+                | awk -F= '{gsub(/ /,"",$2); print $2}')"
+            [ -n "$v" ] && { echo "$v"; return; }
+        fi
+    done
+
+    # 4) 目录名兜底：/usr/local/Ascend/cann-<版本>
+    for d in /usr/local/Ascend/cann-*/; do
+        [ -d "$d" ] || continue
+        v="$(basename "$d" | sed -n 's/^cann-//p')"
+        [ -n "$v" ] && { echo "$v"; return; }
+    done
+
+    # 5) find 兜底
     if has_cmd find; then
         f="$(find /usr/local/Ascend -maxdepth 5 -name 'ascend_toolkit_install.info' 2>/dev/null | head -1)"
         if [ -n "$f" ] && [ -r "$f" ]; then
-            v="$(grep -iE '^version=' "$f" | head -1 \
+            v="$(grep -iE '^version *=' "$f" | head -1 \
                 | awk -F= '{gsub(/ /,"",$2); print $2}')"
             [ -n "$v" ] && { echo "$v"; return; }
         fi
     fi
 
-    # 5) pip3 兜底
+    # 6) pip3 兜底
     if has_cmd pip3; then
         v="$(pip3 show ascend-toolkit 2>/dev/null \
             | awk -F: '/^Version/ {gsub(/ /,"",$2); print $2}')"
@@ -432,7 +460,7 @@ main() {
     # 存储 —— 格式: 设备:容量(型号)[类型]，多块以分号分隔
     csv_row "存储" "$(collect_disk)" "设备:容量(型号)[类型]"
 
-    # 网络 —— 格式: 网卡@IP@MAC
+    # 网络 —— 格式: 网卡@IP@MAC（仅采集链路已 up 的物理网卡）
     csv_row "IP-MAC" "$(collect_network)" "网卡@IP@MAC"
 
     # 加速卡

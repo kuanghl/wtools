@@ -3,6 +3,7 @@
 # vllm_api_test.sh - vLLM API 增强测试脚本（纯 Shell，无 Python 依赖）
 #
 # 覆盖的 API 系列:
+#   - 预测试:          /health, /v1/models, /v1/chat/completions（基本对话）
 #   - 基础端点:        /health, /version, /v1/models, /v1/models/{id},
 #                      /metrics, /openapi.json, /ping, /load
 #   - OpenAI 兼容:     /v1/completions, /v1/chat/completions,
@@ -38,6 +39,7 @@
 #   VLLM_API_KEY          API Key
 #   VLLM_MODEL            模型名称
 #   VERBOSE_MAX_BYTES     -v 模式下单次响应最大打印字节数（默认 4096）
+#   PRETEST_TIMEOUT       预测试请求超时秒数（默认 300，即 5 分钟）
 ###############################################################################
 
 set -o pipefail
@@ -53,6 +55,7 @@ VERBOSE=false
 STREAM_TEST=false
 ERROR_TEST=false
 VERBOSE_MAX_BYTES="${VERBOSE_MAX_BYTES:-4096}"
+PRETEST_TIMEOUT="${PRETEST_TIMEOUT:-300}"   # 预测试超时（5 分钟）
 
 RESP_FILE="$(mktemp /tmp/vllm_test_resp.XXXXXX.json)"
 STREAM_FILE="$(mktemp /tmp/vllm_test_stream.XXXXXX.txt)"
@@ -214,6 +217,28 @@ do_request() {
 }
 
 # ---------------------------------------------------------------------------
+# do_request_with_timeout <method> <path> [json_data] [timeout]
+#   与 do_request 相同，但允许单独指定超时时间（秒）
+# ---------------------------------------------------------------------------
+do_request_with_timeout() {
+    local method="$1" path="$2" data="${3:-}" custom_timeout="${4:-$TIMEOUT}"
+    local url="${BASE_URL}${path}"
+    local args=(-s -o "$RESP_FILE" -w "%{http_code}" --max-time "$custom_timeout")
+
+    [ -n "$API_KEY" ] && args+=(-H "Authorization: Bearer $API_KEY")
+
+    local rc
+    if [ -n "$data" ]; then
+        rc=$(curl "${args[@]}" -X "$method" "$url" \
+            -H "Content-Type: application/json" -d "$data" 2>/dev/null)
+    else
+        rc=$(curl "${args[@]}" -X "$method" "$url" 2>/dev/null)
+    fi
+
+    echo "${rc:-000}"
+}
+
+# ---------------------------------------------------------------------------
 # do_request_multipart <method> <path> <file_path> [form_fields...]
 # ---------------------------------------------------------------------------
 do_request_multipart() {
@@ -361,7 +386,67 @@ generate_silent_wav() {
 }
 
 # ============================================================================
-# 三、基础端点
+# 三、预测试（在基础端点测试之前运行）
+#   覆盖：
+#     - GET  /health
+#     - GET  /v1/models
+#     - POST /v1/chat/completions（基本对话）
+#   全部使用 PRETEST_TIMEOUT（默认 300s）作为请求超时
+# ============================================================================
+pretest() {
+    log_info ">>> 预测试（超时 ${PRETEST_TIMEOUT}s） <<<"
+    echo ""
+
+    # ------------------------------------------------------------------
+    # 预测试 1/3：健康检查
+    # ------------------------------------------------------------------
+    log_info "预测试 1/3: GET /health ..."
+    local code
+    code=$(do_request_with_timeout GET "/health" "" "$PRETEST_TIMEOUT")
+    record_result "预测试 GET /health" "$code" "200"
+    show_response GET "/health"
+
+    # ------------------------------------------------------------------
+    # 预测试 2/3：模型列表
+    # ------------------------------------------------------------------
+    log_info "预测试 2/3: GET /v1/models ..."
+    code=$(do_request_with_timeout GET "/v1/models" "" "$PRETEST_TIMEOUT")
+    record_result "预测试 GET /v1/models" "$code" "200"
+    show_response GET "/v1/models"
+
+    # ------------------------------------------------------------------
+    # 预测试 3/3：基本对话
+    #   若脚本未指定 --model，则回退到示例中的默认模型名
+    # ------------------------------------------------------------------
+    log_info "预测试 3/3: POST /v1/chat/completions ..."
+    local pretest_model="${MODEL:-Qwen3.8-Flash-Next-w8a8-mtp}"
+    local data
+    data=$(cat <<EOF
+{
+    "model": "$pretest_model",
+    "messages": [{"role": "user", "content": "97乘以23等于多少？"}],
+    "max_tokens": 512,
+    "temperature": 0.7
+}
+EOF
+)
+    code=$(do_request_with_timeout POST "/v1/chat/completions" "$data" "$PRETEST_TIMEOUT")
+    record_result "预测试 POST /v1/chat/completions" "$code" "200"
+
+    if [ "$code" = "200" ] && ! validate_json "$RESP_FILE" "choices"; then
+        log_fail "预测试 POST /v1/chat/completions 响应结构校验失败"
+        FAIL=$((FAIL + 1))
+        FAILED_TESTS+=("预测试 POST /v1/chat/completions (结构校验)")
+    fi
+    show_response POST "/v1/chat/completions" "$data"
+
+    echo ""
+    log_info ">>> 预测试结束 <<<"
+    echo ""
+}
+
+# ============================================================================
+# 四、基础端点
 # ============================================================================
 test_health() {
     log_info "测试 /health ..."
@@ -433,7 +518,7 @@ test_load() {
 }
 
 # ============================================================================
-# 四、OpenAI 兼容 API
+# 五、OpenAI 兼容 API
 # ============================================================================
 test_completions() {
     log_info "测试 /v1/completions ..."
@@ -665,7 +750,7 @@ test_stream() {
 }
 
 # ============================================================================
-# 五、Anthropic 兼容 API
+# 六、Anthropic 兼容 API
 # ============================================================================
 test_anthropic_messages() {
     log_info "测试 /v1/messages (Anthropic) ..."
@@ -705,7 +790,7 @@ EOF
 }
 
 # ============================================================================
-# 六、Cohere 兼容 API
+# 七、Cohere 兼容 API
 # ============================================================================
 test_cohere_embed() {
     log_info "测试 /v2/embed (Cohere) ..."
@@ -747,7 +832,7 @@ EOF
 }
 
 # ============================================================================
-# 七、Pooling / Score API
+# 八、Pooling / Score API
 # ============================================================================
 test_score_aliases() {
     local data
@@ -784,7 +869,7 @@ EOF
 }
 
 # ============================================================================
-# 八、Tokenize / Detokenize（含往返校验）
+# 九、Tokenize / Detokenize（含往返校验）
 # ============================================================================
 test_tokenize() {
     log_info "测试 /tokenize ..."
@@ -853,7 +938,7 @@ EOF
 }
 
 # ============================================================================
-# 九、LoRA 动态加载/卸载
+# 十、LoRA 动态加载/卸载
 # ============================================================================
 test_lora() {
     log_info "测试 LoRA 动态加载/卸载 ..."
@@ -880,7 +965,7 @@ test_lora() {
 }
 
 # ============================================================================
-# 十、Batch / File API
+# 十一、Batch / File API
 # ============================================================================
 test_batch_files() {
     log_info "测试 Batch / File API ..."
@@ -918,7 +1003,7 @@ test_batch_files() {
 }
 
 # ============================================================================
-# 十一、SageMaker / 其他端点
+# 十二、SageMaker / 其他端点
 # ============================================================================
 test_sagemaker_invocations() {
     log_info "测试 /invocations (SageMaker) ..."
@@ -975,7 +1060,7 @@ test_scale_elastic_ep() {
 }
 
 # ============================================================================
-# 十二、错误路径测试
+# 十三、错误路径测试
 # ============================================================================
 test_error_paths() {
     [ "$ERROR_TEST" = true ] || return 0
@@ -1021,7 +1106,7 @@ test_error_paths() {
 }
 
 # ============================================================================
-# 十三、主流程
+# 十四、主流程
 # ============================================================================
 print_usage() {
     cat <<EOF
@@ -1043,11 +1128,13 @@ print_usage() {
   VLLM_API_KEY         API Key
   VLLM_MODEL           模型名称
   VERBOSE_MAX_BYTES    -v 模式下响应最大打印字节数（默认 4096）
+  PRETEST_TIMEOUT      预测试请求超时秒数（默认 300，即 5 分钟）
 
 示例:
   $0 -u http://192.168.1.100:8000 -m Qwen3-27B
   $0 -k sk-abc123 -v --all
   VERBOSE_MAX_BYTES=16384 $0 -v
+  PRETEST_TIMEOUT=600 $0 -m Qwen3.8-Flash-Next-w8a8-mtp
 
 依赖:
   bash 4.0+、curl
@@ -1143,8 +1230,12 @@ main() {
         echo "  jq:       未安装（跳过 JSON 结构校验）"
     fi
     echo "  截断阈值: ${VERBOSE_MAX_BYTES} bytes"
+    echo "  预测试超时: ${PRETEST_TIMEOUT}s"
     echo "============================================"
     echo ""
+
+    # ---- 预测试（先跑通健康检查 + 模型列表 + 基本对话） ----
+    pretest
 
     log_info ">>> 基础端点 <<<"
     test_health

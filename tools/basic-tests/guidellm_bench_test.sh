@@ -1,6 +1,17 @@
 #!/bin/bash
-# GuideLLM benchmark sweep: 6 prompt/output-length profiles x concurrency {1,2,4,8,16}
+# GuideLLM benchmark sweep: 8 prompt/output-length profiles x concurrency {1,2,4,8,16}
 # Uses a local tokenizer path to avoid HuggingFace network requests.
+#
+# Optimization notes:
+#   1. Each configuration runs a fixed number of requests using the max_requests
+#      constraint instead of waiting for max_duration.
+#   2. max_duration is only a fallback to prevent a hung request from blocking
+#      the whole sweep.
+#   3. The number of requests per stream is chosen dynamically: longer outputs
+#      use fewer requests per stream.
+#   4. Metric extraction prefers successful requests. If successful=0, it falls
+#      back to incomplete requests to avoid an entire row becoming N/A.
+#   5. The CSV includes an incomplete column so data quality is easier to judge.
 #
 # Derived metrics:
 #   MEAN_OUT_TPS_PER_REQ = 1000 / mean_tpot_ms
@@ -27,7 +38,10 @@ LOCAL_MODEL_PATH="/models/Qwen3.8-27B"
 MODEL_NAME="Qwen3.8-27B"
 TARGET_URL="http://localhost:8000"
 OUT_DIR="/tmp/guidellm"
-MAX_DURATION_S=120
+
+# max_duration is only a fallback. Normally the run exits after max_requests is
+# satisfied. This value only prevents an abnormal hang.
+MAX_DURATION_S=1800
 SLEEP_BETWEEN=3
 
 CONCURRENCIES=(1 2 4 8 16)
@@ -44,7 +58,8 @@ PROFILES=(
   "32768:1024"
 )
 
-CSV_HEADER="input_len,output_len,concurrency,completed,failed,duration_s,qps_req_s,input_throughput_tps,output_throughput_tps,mean_output_tps_per_req,p99_output_tps_per_req,e2e_throughput_tps,mean_ttft_ms,p99_ttft_ms,mean_tpot_ms,p99_tpot_ms,mean_itl_ms,p99_itl_ms,mean_e2el_ms,p99_e2el_ms"
+# CSV includes an incomplete column to make data quality easier to inspect.
+CSV_HEADER="input_len,output_len,concurrency,completed,incomplete,failed,duration_s,qps_req_s,input_throughput_tps,output_throughput_tps,mean_output_tps_per_req,p99_output_tps_per_req,e2e_throughput_tps,mean_ttft_ms,p99_ttft_ms,mean_tpot_ms,p99_tpot_ms,mean_itl_ms,p99_itl_ms,mean_e2el_ms,p99_e2el_ms"
 
 # ------------------------------- Functions --------------------------------
 
@@ -54,29 +69,56 @@ init_csv() {
 }
 
 # Append a placeholder row (all metrics N/A) when a run fails.
+# The CSV now has 21 columns, so this row contains 3 metadata fields plus 18 N/A fields.
 append_failure_row() {
   local in_len=$1 out_len=$2 conc=$3
-  echo "$in_len,$out_len,$conc,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A" >> "$RESULT_CSV"
+  echo "$in_len,$out_len,$conc,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A" >> "$RESULT_CSV"
+}
+
+# Decide how many requests each concurrent stream should send.
+# Longer outputs take more time, so fewer requests per stream are used.
+requests_per_stream() {
+  local out_len=$1
+  if [ "$out_len" -ge 8192 ]; then
+    echo 2
+  elif [ "$out_len" -ge 4096 ]; then
+    echo 3
+  else
+    echo 5
+  fi
 }
 
 # Extract metrics from the GuideLLM JSON, compute derived values, append one CSV row.
 collect_and_append_metrics() {
   local in_len=$1 out_len=$2 conc=$3 json=$4
 
-  local COMPLETED FAILED DURATION TOTAL_IN_TOK TOTAL_OUT_TOK
+  local COMPLETED INCOMPLETE FAILED DURATION TOTAL_IN_TOK TOTAL_OUT_TOK
   local QPS INPUT_TPS OUTPUT_TPS E2E_TPS
   local MEAN_TTFT P99_TTFT MEAN_TPOT P99_TPOT MEAN_ITL P99_ITL
   local MEAN_OUT_TPS_PER_REQ P99_OUT_TPS_PER_REQ MEAN_E2EL P99_E2EL
+  local SCOPE
 
-  COMPLETED=$(jq -r '.benchmarks[0].metrics.request_totals.successful // "N/A"' "$json")
-  FAILED=$(jq -r '.benchmarks[0].metrics.request_totals.errored    // "N/A"' "$json")
-  DURATION=$(jq -r '.benchmarks[0].duration // "N/A"' "$json")
+  COMPLETED=$(jq -r '.benchmarks[0].metrics.request_totals.successful // 0' "$json")
+  INCOMPLETE=$(jq -r '.benchmarks[0].metrics.request_totals.incomplete // 0' "$json")
+  FAILED=$(jq -r '.benchmarks[0].metrics.request_totals.errored    // 0' "$json")
+  DURATION=$(jq -r '.benchmarks[0].duration // 0' "$json")
 
   TOTAL_IN_TOK=$(jq -r '.benchmarks[0].metrics.text.tokens.input.total.total_sum  // 0' "$json")
   TOTAL_OUT_TOK=$(jq -r '.benchmarks[0].metrics.text.tokens.output.total.total_sum // 0' "$json")
 
+  # Prefer successful metrics. If there are no successful requests, fall back to
+  # incomplete. Finally fall back to total. This avoids an all-N/A row when the
+  # benchmark was stopped before any request completed successfully.
+  if [ "$COMPLETED" -gt 0 ]; then
+    SCOPE="successful"
+  elif [ "$INCOMPLETE" -gt 0 ]; then
+    SCOPE="incomplete"
+  else
+    SCOPE="total"
+  fi
+
   # Throughputs
-  if [ "$DURATION" != "N/A" ] && [ "$DURATION" != "0" ] && [ "$DURATION" != "null" ]; then
+  if [ "$DURATION" != "0" ] && [ "$DURATION" != "null" ]; then
     QPS=$(awk -v c="$COMPLETED" -v d="$DURATION" \
       'BEGIN { if (d>0) printf "%.4f", c/d; else print "N/A" }')
     INPUT_TPS=$(awk -v i="$TOTAL_IN_TOK" -v d="$DURATION" \
@@ -90,12 +132,12 @@ collect_and_append_metrics() {
   fi
 
   # Latency metrics (GuideLLM already stores ms for these)
-  MEAN_TTFT=$(jq -r '.benchmarks[0].metrics.time_to_first_token_ms.successful.mean // "N/A"' "$json")
-  P99_TTFT=$(jq -r '.benchmarks[0].metrics.time_to_first_token_ms.successful.percentiles.p99 // "N/A"' "$json")
-  MEAN_TPOT=$(jq -r '.benchmarks[0].metrics.time_per_output_token_ms.successful.mean // "N/A"' "$json")
-  P99_TPOT=$(jq -r '.benchmarks[0].metrics.time_per_output_token_ms.successful.percentiles.p99 // "N/A"' "$json")
-  MEAN_ITL=$(jq -r '.benchmarks[0].metrics.inter_token_latency_ms.successful.mean // "N/A"' "$json")
-  P99_ITL=$(jq -r '.benchmarks[0].metrics.inter_token_latency_ms.successful.percentiles.p99 // "N/A"' "$json")
+  MEAN_TTFT=$(jq -r ".benchmarks[0].metrics.time_to_first_token_ms.${SCOPE}.mean // \"N/A\"" "$json")
+  P99_TTFT=$(jq -r ".benchmarks[0].metrics.time_to_first_token_ms.${SCOPE}.percentiles.p99 // \"N/A\"" "$json")
+  MEAN_TPOT=$(jq -r ".benchmarks[0].metrics.time_per_output_token_ms.${SCOPE}.mean // \"N/A\"" "$json")
+  P99_TPOT=$(jq -r ".benchmarks[0].metrics.time_per_output_token_ms.${SCOPE}.percentiles.p99 // \"N/A\"" "$json")
+  MEAN_ITL=$(jq -r ".benchmarks[0].metrics.inter_token_latency_ms.${SCOPE}.mean // \"N/A\"" "$json")
+  P99_ITL=$(jq -r ".benchmarks[0].metrics.inter_token_latency_ms.${SCOPE}.percentiles.p99 // \"N/A\"" "$json")
 
   # Per-request generation speed derived from TPOT
   MEAN_OUT_TPS_PER_REQ=$(awk -v p="$MEAN_TPOT" \
@@ -104,21 +146,30 @@ collect_and_append_metrics() {
     'BEGIN { if (p>0) printf "%.2f", 1000/p; else print "N/A" }')
 
   # E2E latency: GuideLLM stores seconds -> convert to ms
-  MEAN_E2EL=$(jq -r '(.benchmarks[0].metrics.request_latency.successful.mean * 1000) // "N/A"' "$json")
-  P99_E2EL=$(jq -r '(.benchmarks[0].metrics.request_latency.successful.percentiles.p99 * 1000) // "N/A"' "$json")
+  MEAN_E2EL=$(jq -r "(.benchmarks[0].metrics.request_latency.${SCOPE}.mean * 1000) // \"N/A\"" "$json")
+  P99_E2EL=$(jq -r "(.benchmarks[0].metrics.request_latency.${SCOPE}.percentiles.p99 * 1000) // \"N/A\"" "$json")
 
-  echo "$in_len,$out_len,$conc,$COMPLETED,$FAILED,$DURATION,$QPS,$INPUT_TPS,$OUTPUT_TPS,$MEAN_OUT_TPS_PER_REQ,$P99_OUT_TPS_PER_REQ,$E2E_TPS,$MEAN_TTFT,$P99_TTFT,$MEAN_TPOT,$P99_TPOT,$MEAN_ITL,$P99_ITL,$MEAN_E2EL,$P99_E2EL" >> "$RESULT_CSV"
+  echo "$in_len,$out_len,$conc,$COMPLETED,$INCOMPLETE,$FAILED,$DURATION,$QPS,$INPUT_TPS,$OUTPUT_TPS,$MEAN_OUT_TPS_PER_REQ,$P99_OUT_TPS_PER_REQ,$E2E_TPS,$MEAN_TTFT,$P99_TTFT,$MEAN_TPOT,$P99_TPOT,$MEAN_ITL,$P99_ITL,$MEAN_E2EL,$P99_E2EL" >> "$RESULT_CSV"
 
   echo "Done: QPS=$QPS req/s | InTPS=$INPUT_TPS tok/s | OutTPS=$OUTPUT_TPS tok/s | MeanReqTPS=$MEAN_OUT_TPS_PER_REQ tok/s | P99ReqTPS=$P99_OUT_TPS_PER_REQ tok/s | E2ETPS=$E2E_TPS tok/s"
   echo "      TTFT=${MEAN_TTFT}/${P99_TTFT} ms, TPOT=${MEAN_TPOT}/${P99_TPOT} ms, E2EL=${MEAN_E2EL}/${P99_E2EL} ms"
+  echo "      scope=$SCOPE, completed=$COMPLETED, incomplete=$INCOMPLETE, failed=$FAILED"
 }
 
 # Run one GuideLLM invocation and record results.
 run_one_bench() {
   local in_len=$1 out_len=$2 conc=$3
   local json_out="${OUT_DIR}/bench_in${in_len}_out${out_len}_c${conc}.json"
+  local rps total_requests
 
-  echo "=== prompt_tokens=$in_len output_tokens=$out_len concurrency=$conc ==="
+  # Decide requests per stream, then multiply by concurrency to get the total.
+  rps=$(requests_per_stream "$out_len")
+  total_requests=$((conc * rps))
+
+  echo "=== prompt_tokens=$in_len output_tokens=$out_len concurrency=$conc total_requests=$total_requests ==="
+
+  # Remove any old JSON so a failed run cannot accidentally reuse a previous file.
+  rm -f "$json_out"
 
   guidellm run \
     --backend "kind=openai_http,target=${TARGET_URL},model=${MODEL_NAME}" \
@@ -126,6 +177,7 @@ run_one_bench() {
     --profile "kind=concurrent" \
     --override "profile.streams" "$conc" \
     --data "kind=synthetic_text,prompt_tokens=${in_len},output_tokens=${out_len}" \
+    --constraint "kind=max_requests,count=${total_requests}" \
     --constraint "kind=max_duration,seconds=${MAX_DURATION_S}" \
     --output "kind=json,path=${json_out}" \
     --disable-console-interactive

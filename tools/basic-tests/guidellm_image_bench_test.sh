@@ -1,0 +1,265 @@
+#!/bin/bash
+# GuideLLM image benchmark sweep: 4 image-resolution profiles x concurrency {1,2,4,8,16}
+# Vision-Language Model (VLM) benchmarking with synthetic images.
+#
+# Resolution mapping (16:9 aspect ratio):
+#   720P  -> 1280 x 720
+#   1080P -> 1920 x 1080
+#   2K    -> 2560 x 1440
+#   4K    -> 3840 x 2160
+#
+# Optimization notes:
+#   1. Each configuration runs a fixed number of requests using the max_requests
+#      constraint instead of waiting for max_duration.
+#   2. max_duration is only a fallback to prevent a hung request from blocking
+#      the whole sweep.
+#   3. The number of requests per stream is chosen dynamically: larger images
+#      or longer outputs use fewer requests per stream.
+#   4. Metric extraction prefers successful requests. If successful=0, it falls
+#      back to incomplete requests to avoid an entire row becoming N/A.
+#   5. The CSV includes an incomplete column so data quality is easier to judge.
+#
+# Derived metrics:
+#   MEAN_OUT_TPS_PER_REQ = 1000 / mean_tpot_ms
+#   P99_OUT_TPS_PER_REQ  = 1000 / p99_tpot_ms
+#
+# Inspect a single run:
+#   jq 'keys' /tmp/guidellm/bench_720p_c1.json
+#   jq '.benchmarks[0] | keys' /tmp/guidellm/bench_720p_c1.json
+# Check CSV:
+#   column -t -s, /tmp/guidellm_image_benchmark_results.csv
+#
+
+set -u
+
+# ----------------------------- Configuration ------------------------------
+RESULT_CSV="/tmp/guidellm_image_benchmark_results.csv"
+
+# ---- Offline configuration ----
+export HF_ENDPOINT=https://hf-mirror.com
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+
+LOCAL_MODEL_PATH="/models/Qwen3.8-27B"
+MODEL_NAME="Qwen3.8-27B"
+TARGET_URL="http://localhost:8000"
+OUT_DIR="/tmp/guidellm"
+
+# max_duration is only a fallback. Normally the run exits after max_requests is
+# satisfied. This value only prevents an abnormal hang.
+MAX_DURATION_S=1800
+SLEEP_BETWEEN=3
+
+CONCURRENCIES=(1 2 4 8 16)
+
+# Image resolution profiles: "label:width:height"
+# All use 16:9 aspect ratio. 2K here means 2560x1440 (QHD).
+IMAGE_PROFILES=(
+  "720P:1280:720"
+  "1080P:1920:1080"
+  "2K:2560:1440"
+  "4K:3840:2160"
+)
+
+# Text prompt tokens accompanying each image request
+PROMPT_TOKENS=256
+OUTPUT_TOKENS=1024
+
+# CSV includes an incomplete column to make data quality easier to inspect.
+CSV_HEADER="resolution,image_width,image_height,concurrency,completed,incomplete,failed,duration_s,qps_req_s,mean_image_tokens,mean_image_pixels,mean_image_bytes,output_throughput_tps,mean_output_tps_per_req,p99_output_tps_per_req,e2e_throughput_tps,mean_ttft_ms,p99_ttft_ms,mean_tpot_ms,p99_tpot_ms,mean_itl_ms,p99_itl_ms,mean_e2el_ms,p99_e2el_ms"
+
+# ------------------------------- Functions --------------------------------
+
+init_csv() {
+  echo "$CSV_HEADER" > "$RESULT_CSV"
+  mkdir -p "$OUT_DIR"
+}
+
+# Append a placeholder row (all metrics N/A) when a run fails.
+# The CSV now has 24 columns, so this row contains 4 metadata fields plus 20 N/A fields.
+append_failure_row() {
+  local res_label=$1 width=$2 height=$3 conc=$4
+  echo "$res_label,$width,$height,$conc,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A" >> "$RESULT_CSV"
+}
+
+# Decide how many requests each concurrent stream should send.
+# Larger images and longer outputs take more time, so fewer requests per stream are used.
+requests_per_stream() {
+  local width=$1 height=$2 out_len=$3
+  local pixels=$((width * height))
+  # 4K (>= 3840x2160) or very long outputs: 2 request per stream
+  # 2K (>= 2560x1440) or long outputs: 3 requests per stream
+  # Others: 5 requests per stream
+  if [ "$pixels" -ge 8294400 ] || [ "$out_len" -ge 4096 ]; then
+    echo 2
+  elif [ "$pixels" -ge 3686400 ] || [ "$out_len" -ge 2048 ]; then
+    echo 3
+  else
+    echo 5
+  fi
+}
+
+# Extract metrics from the GuideLLM JSON, compute derived values, append one CSV row.
+collect_and_append_metrics() {
+  local res_label=$1 width=$2 height=$3 conc=$4 json=$5
+
+  local COMPLETED INCOMPLETE FAILED DURATION
+  local TOTAL_IN_TOK TOTAL_OUT_TOK
+  local QPS OUTPUT_TPS E2E_TPS
+  local MEAN_IMAGE_TOKENS MEAN_IMAGE_PIXELS MEAN_IMAGE_BYTES
+  local MEAN_TTFT P99_TTFT MEAN_TPOT P99_TPOT MEAN_ITL P99_ITL
+  local MEAN_OUT_TPS_PER_REQ P99_OUT_TPS_PER_REQ MEAN_E2EL P99_E2EL
+  local SCOPE
+
+  COMPLETED=$(jq -r '.benchmarks[0].metrics.request_totals.successful // 0' "$json")
+  INCOMPLETE=$(jq -r '.benchmarks[0].metrics.request_totals.incomplete // 0' "$json")
+  FAILED=$(jq -r '.benchmarks[0].metrics.request_totals.errored    // 0' "$json")
+  DURATION=$(jq -r '.benchmarks[0].duration // 0' "$json")
+
+  TOTAL_IN_TOK=$(jq -r '.benchmarks[0].metrics.text.tokens.input.total.total_sum  // 0' "$json")
+  TOTAL_OUT_TOK=$(jq -r '.benchmarks[0].metrics.text.tokens.output.total.total_sum // 0' "$json")
+
+  # Prefer successful metrics. If there are no successful requests, fall back to
+  # incomplete. Finally fall back to total. This avoids an all-N/A row when the
+  # benchmark was stopped before any request completed successfully.
+  if [ "$COMPLETED" -gt 0 ]; then
+    SCOPE="successful"
+  elif [ "$INCOMPLETE" -gt 0 ]; then
+    SCOPE="incomplete"
+  else
+    SCOPE="total"
+  fi
+
+  # ---- Image / vision metrics ----
+  # GuideLLM tracks image_count, image_pixels, image_bytes in usage metrics.
+  # Fall back to manual calculation if the mean field is not present.
+  MEAN_IMAGE_TOKENS=$(jq -r "
+    .benchmarks[0].metrics.usage.vision.image_tokens.${SCOPE}.mean
+    // (.benchmarks[0].metrics.usage.vision.image_tokens.${SCOPE}.total / .benchmarks[0].metrics.request_totals.${SCOPE})
+    // \"N/A\"" "$json" 2>/dev/null)
+
+  MEAN_IMAGE_PIXELS=$(jq -r "
+    .benchmarks[0].metrics.usage.vision.image_pixels.${SCOPE}.mean
+    // (.benchmarks[0].metrics.usage.vision.image_pixels.${SCOPE}.total / .benchmarks[0].metrics.request_totals.${SCOPE})
+    // \"N/A\"" "$json" 2>/dev/null)
+
+  MEAN_IMAGE_BYTES=$(jq -r "
+    .benchmarks[0].metrics.usage.vision.image_bytes.${SCOPE}.mean
+    // (.benchmarks[0].metrics.usage.vision.image_bytes.${SCOPE}.total / .benchmarks[0].metrics.request_totals.${SCOPE})
+    // \"N/A\"" "$json" 2>/dev/null)
+
+  # ---- Throughputs ----
+  if [ "$DURATION" != "0" ] && [ "$DURATION" != "null" ]; then
+    QPS=$(awk -v c="$COMPLETED" -v d="$DURATION" \
+      'BEGIN { if (d>0) printf "%.4f", c/d; else print "N/A" }')
+    OUTPUT_TPS=$(awk -v o="$TOTAL_OUT_TOK" -v d="$DURATION" \
+      'BEGIN { if (d>0) printf "%.2f", o/d; else print "N/A" }')
+    E2E_TPS=$(awk -v i="$TOTAL_IN_TOK" -v o="$TOTAL_OUT_TOK" -v d="$DURATION" \
+      'BEGIN { if (d>0) printf "%.2f", (i+o)/d; else print "N/A" }')
+  else
+    QPS="N/A"; OUTPUT_TPS="N/A"; E2E_TPS="N/A"
+  fi
+
+  # ---- Latency metrics (GuideLLM already stores ms) ----
+  MEAN_TTFT=$(jq -r ".benchmarks[0].metrics.time_to_first_token_ms.${SCOPE}.mean // \"N/A\"" "$json")
+  P99_TTFT=$(jq -r ".benchmarks[0].metrics.time_to_first_token_ms.${SCOPE}.percentiles.p99 // \"N/A\"" "$json")
+  MEAN_TPOT=$(jq -r ".benchmarks[0].metrics.time_per_output_token_ms.${SCOPE}.mean // \"N/A\"" "$json")
+  P99_TPOT=$(jq -r ".benchmarks[0].metrics.time_per_output_token_ms.${SCOPE}.percentiles.p99 // \"N/A\"" "$json")
+  MEAN_ITL=$(jq -r ".benchmarks[0].metrics.inter_token_latency_ms.${SCOPE}.mean // \"N/A\"" "$json")
+  P99_ITL=$(jq -r ".benchmarks[0].metrics.inter_token_latency_ms.${SCOPE}.percentiles.p99 // \"N/A\"" "$json")
+
+  # Per-request generation speed derived from TPOT
+  MEAN_OUT_TPS_PER_REQ=$(awk -v p="$MEAN_TPOT" \
+    'BEGIN { if (p>0) printf "%.2f", 1000/p; else print "N/A" }')
+  P99_OUT_TPS_PER_REQ=$(awk -v p="$P99_TPOT" \
+    'BEGIN { if (p>0) printf "%.2f", 1000/p; else print "N/A" }')
+
+  # E2E latency: GuideLLM stores seconds -> convert to ms
+  MEAN_E2EL=$(jq -r "(.benchmarks[0].metrics.request_latency.${SCOPE}.mean * 1000) // \"N/A\"" "$json")
+  P99_E2EL=$(jq -r "(.benchmarks[0].metrics.request_latency.${SCOPE}.percentiles.p99 * 1000) // \"N/A\"" "$json")
+
+  echo "$res_label,$width,$height,$conc,$COMPLETED,$INCOMPLETE,$FAILED,$DURATION,$QPS,$MEAN_IMAGE_TOKENS,$MEAN_IMAGE_PIXELS,$MEAN_IMAGE_BYTES,$OUTPUT_TPS,$MEAN_OUT_TPS_PER_REQ,$P99_OUT_TPS_PER_REQ,$E2E_TPS,$MEAN_TTFT,$P99_TTFT,$MEAN_TPOT,$P99_TPOT,$MEAN_ITL,$P99_ITL,$MEAN_E2EL,$P99_E2EL" >> "$RESULT_CSV"
+
+  echo "Done: QPS=$QPS req/s | OutTPS=$OUTPUT_TPS tok/s | MeanReqTPS=$MEAN_OUT_TPS_PER_REQ tok/s | P99ReqTPS=$P99_OUT_TPS_PER_REQ tok/s | E2ETPS=$E2E_TPS tok/s"
+  echo "      TTFT=${MEAN_TTFT}/${P99_TTFT} ms, TPOT=${MEAN_TPOT}/${P99_TPOT} ms, E2EL=${MEAN_E2EL}/${P99_E2EL} ms"
+  echo "      Image: tokens=$MEAN_IMAGE_TOKENS, pixels=$MEAN_IMAGE_PIXELS, bytes=$MEAN_IMAGE_BYTES"
+  echo "      scope=$SCOPE, completed=$COMPLETED, incomplete=$INCOMPLETE, failed=$FAILED"
+}
+
+# Run one GuideLLM invocation with a synthetic image and record results.
+run_one_bench() {
+  local res_label=$1 width=$2 height=$3 conc=$4
+  local json_out="${OUT_DIR}/bench_${res_label}_c${conc}.json"
+  local rps total_requests
+
+  # Decide requests per stream, then multiply by concurrency to get the total.
+  rps=$(requests_per_stream "$width" "$height" "$OUTPUT_TOKENS")
+  total_requests=$((conc * rps))
+
+  echo "=== resolution=$res_label (${width}x${height}) concurrency=$conc total_requests=$total_requests ==="
+
+  # Remove any old JSON so a failed run cannot accidentally reuse a previous file.
+  rm -f "$json_out"
+
+  guidellm run \
+    --backend "kind=openai_http,target=${TARGET_URL},model=${MODEL_NAME}" \
+    --tokenizer "kind=huggingface_auto,model=${LOCAL_MODEL_PATH}" \
+    --profile "kind=concurrent" \
+    --override "profile.streams" "$conc" \
+    --data "kind=synthetic_text,prompt_tokens=${PROMPT_TOKENS}" \
+    --data "kind=synthetic_image,width=${width},height=${height},format=jpeg,output_tokens=${OUTPUT_TOKENS}" \
+    --constraint "kind=max_requests,count=${total_requests}" \
+    --constraint "kind=max_duration,seconds=${MAX_DURATION_S}" \
+    --output "kind=json,path=${json_out}" \
+    --disable-console-interactive
+
+  if [ ! -f "$json_out" ]; then
+    echo "ERROR: JSON not generated for resolution=$res_label conc=$conc"
+    append_failure_row "$res_label" "$width" "$height" "$conc"
+    return 1
+  fi
+
+  collect_and_append_metrics "$res_label" "$width" "$height" "$conc" "$json_out"
+}
+
+# Sweep all concurrency levels for one resolution profile.
+run_profile() {
+  local res_label=$1 width=$2 height=$3
+  local conc
+
+  echo
+  echo "############################################################"
+  echo "# Image Resolution: $res_label (${width}x${height})"
+  echo "############################################################"
+
+  for conc in "${CONCURRENCIES[@]}"; do
+    run_one_bench "$res_label" "$width" "$height" "$conc"
+    sleep "$SLEEP_BETWEEN"
+  done
+}
+
+# Sweep all resolution profiles.
+run_all_profiles() {
+  local profile res_label width height
+
+  for profile in "${IMAGE_PROFILES[@]}"; do
+    res_label="${profile%%:*}"
+    local rest="${profile#*:}"
+    width="${rest%%:*}"
+    height="${rest##*:}"
+    run_profile "$res_label" "$width" "$height"
+  done
+}
+
+# ---------------------------------- Main ----------------------------------
+
+main() {
+  init_csv
+  run_all_profiles
+
+  echo
+  echo "Results saved to: $RESULT_CSV"
+  column -t -s, "$RESULT_CSV" 2>/dev/null || cat "$RESULT_CSV"
+}
+
+main "$@"

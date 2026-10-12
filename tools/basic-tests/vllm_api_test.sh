@@ -419,7 +419,7 @@ pretest() {
     #   若脚本未指定 --model，则回退到示例中的默认模型名
     # ------------------------------------------------------------------
     log_info "预测试 3/3: POST /v1/chat/completions ..."
-    local pretest_model="${MODEL:-Qwen3.8-Flash-Next-w8a8-mtp}"
+    local pretest_model="${MODEL}"
     local data
     data=$(cat <<EOF
 {

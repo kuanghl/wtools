@@ -14,6 +14,8 @@ env:
 jobs:
   build-wsl-ubuntu20_04:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Dependencies
         run: |
@@ -41,7 +43,6 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
           files: tools/build-wsl/wsl/dist/Ubuntu20.04.zip
-          generate_release_notes: true
           draft: false
           prerelease: false
         env:

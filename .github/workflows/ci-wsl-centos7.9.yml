@@ -14,6 +14,8 @@ env:
 jobs:
   build-wsl-centos7_9:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Dependencies
         run: |
@@ -42,7 +44,6 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
           files: tools/build-wsl/wsl/dist/CentOS-7.9-2111.zip
-          generate_release_notes: true
           draft: false
           prerelease: false
         env:

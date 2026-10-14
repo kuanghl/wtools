@@ -14,6 +14,8 @@ env:
 jobs:
   build-wsl-centos8_5:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Dependencies
         run: |
@@ -42,7 +44,6 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
           files: tools/build-wsl/wsl/dist/CentOS-8.5-2105.zip
-          generate_release_notes: true
           draft: false
           prerelease: false
         env:

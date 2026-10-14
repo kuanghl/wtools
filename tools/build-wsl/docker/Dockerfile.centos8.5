@@ -1,0 +1,38 @@
+FROM centos:8.4.2105
+
+LABEL maintainer="Semptian"
+LABEL description="CentOS 8.5 with Alibaba Cloud vault mirrors (EOL)"
+
+# CentOS 8 is EOL since 2021-12-31, use Alibaba Cloud vault mirrors pinned to 8.5.2111
+# repo:/etc/yum.repos.d/
+# https://mirrors.aliyun.com/centos-vault/8.5.2111/
+RUN rm -f /etc/yum.repos.d/*.repo && \
+    printf '[baseos]\n\
+name=CentOS Linux 8.5.2111 - BaseOS\n\
+baseurl=https://mirrors.aliyun.com/centos-vault/8.5.2111/BaseOS/$basearch/os/\n\
+gpgcheck=1\n\
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-centosofficial\n' > /etc/yum.repos.d/CentOS-Linux-BaseOS.repo && \
+    printf '[appstream]\n\
+name=CentOS Linux 8.5.2111 - AppStream\n\
+baseurl=https://mirrors.aliyun.com/centos-vault/8.5.2111/AppStream/$basearch/os/\n\
+gpgcheck=1\n\
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-centosofficial\n' > /etc/yum.repos.d/CentOS-Linux-AppStream.repo && \
+    printf '[extras]\n\
+name=CentOS Linux 8.5.2111 - Extras\n\
+baseurl=https://mirrors.aliyun.com/centos-vault/8.5.2111/extras/$basearch/os/\n\
+gpgcheck=1\n\
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-centosofficial\n' > /etc/yum.repos.d/CentOS-Linux-Extras.repo && \
+    printf '[powertools]\n\
+name=CentOS Linux 8.5.2111 - PowerTools\n\
+baseurl=https://mirrors.aliyun.com/centos-vault/8.5.2111/PowerTools/$basearch/os/\n\
+gpgcheck=1\n\
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-centosofficial\n\
+enabled=1\n' > /etc/yum.repos.d/CentOS-Linux-PowerTools.repo && \
+    yum clean all && \
+    yum makecache
+
+# Install locale support to avoid "Failed to set locale" warnings
+RUN yum install -y glibc-langpack-zh && \
+    yum clean all
+
+CMD ["/bin/bash"]

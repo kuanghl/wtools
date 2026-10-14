@@ -1,0 +1,65 @@
+FROM centos:7
+
+LABEL maintainer="Semptian"
+LABEL description="CentOS 7.9 with Alibaba Cloud mirrors, CMake 3.27 and GCC 9 (EOL)"
+
+# CentOS 7 is EOL since 2024-06-30, use Alibaba Cloud mirrors pinned to 7.9.2009
+# repo:/etc/yum.repos.d/
+# https://mirrors.aliyun.com/centos/7.9.2009/
+RUN rm -f /etc/yum.repos.d/*.repo && \
+    printf '[base]\n\
+name=CentOS-7.9.2009 - Base\n\
+baseurl=https://mirrors.aliyun.com/centos/7.9.2009/os/$basearch/\n\
+gpgcheck=1\n\
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7\n\
+\n\
+[updates]\n\
+name=CentOS-7.9.2009 - Updates\n\
+baseurl=https://mirrors.aliyun.com/centos/7.9.2009/updates/$basearch/\n\
+gpgcheck=1\n\
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7\n\
+\n\
+[extras]\n\
+name=CentOS-7.9.2009 - Extras\n\
+baseurl=https://mirrors.aliyun.com/centos/7.9.2009/extras/$basearch/\n\
+gpgcheck=1\n\
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7\n\
+\n\
+[centosplus]\n\
+name=CentOS-7.9.2009 - Plus\n\
+baseurl=https://mirrors.aliyun.com/centos/7.9.2009/centosplus/$basearch/\n\
+gpgcheck=1\n\
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7\n\
+enabled=0\n' > /etc/yum.repos.d/CentOS-Base.repo && \
+    yum clean all && \
+    yum makecache fast
+
+# Install CMake 3.27 from pre-built binary
+RUN yum install -y curl && \
+    cd /tmp && \
+    curl -LO https://cmake.org/files/v3.27/cmake-3.27.9-linux-x86_64.tar.gz && \
+    tar -xzf cmake-3.27.9-linux-x86_64.tar.gz && \
+    mv cmake-3.27.9-linux-x86_64 /opt/cmake && \
+    ln -s /opt/cmake/bin/cmake /usr/local/bin/cmake && \
+    ln -s /opt/cmake/bin/ctest /usr/local/bin/ctest && \
+    ln -s /opt/cmake/bin/cpack /usr/local/bin/cpack && \
+    rm -f /tmp/cmake-3.27.9-linux-x86_64.tar.gz && \
+    yum clean all
+
+# Add CentOS Vault repo for devtoolset (SCL)
+# For Install devtoolset-9 (GCC 9) and build dependencies
+RUN printf '[vault-sclo]\n\
+name=CentOS-7.9.2009 - Vault SCL\n\
+baseurl=https://mirrors.aliyun.com/centos-vault/7.9.2009/sclo/x86_64/sclo/\n\
+gpgcheck=0\n\
+enabled=1\n\
+\n\
+[vault-rh]\n\
+name=CentOS-7.9.2009 - Vault RH\n\
+baseurl=https://mirrors.aliyun.com/centos-vault/7.9.2009/sclo/x86_64/rh/\n\
+gpgcheck=0\n\
+enabled=1\n' > /etc/yum.repos.d/CentOS-Vault.repo && \
+    yum clean all && \
+    yum makecache
+
+CMD ["/bin/bash"]

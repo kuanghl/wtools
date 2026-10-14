@@ -32,7 +32,7 @@ jobs:
           ./build-wsl-ubuntu20.04.sh
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Ubuntu-20.04
           path: tools/build-wsl/wsl/dist/Ubuntu20.04.zip

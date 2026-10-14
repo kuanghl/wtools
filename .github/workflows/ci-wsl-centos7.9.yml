@@ -33,7 +33,7 @@ jobs:
           mv wsl/dist/CentOS7.zip wsl/dist/CentOS-7.9-2111.zip
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: CentOS-7.9-2111
           path: tools/build-wsl/wsl/dist/CentOS-7.9-2111.zip

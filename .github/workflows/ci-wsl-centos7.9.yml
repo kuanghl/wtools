@@ -2,8 +2,8 @@ name: CI CentOS 7.9
 
 on:
   push:
-    branches:
-      - master
+    # branches:
+    #   - master
     tags:
       - '*'
   workflow_dispatch:
@@ -36,14 +36,14 @@ jobs:
           name: CentOS-7.9-2111
           path: tools/build-wsl/wsl/dist/CentOS-7.9-2111.zip
 
-      # - name: Release
-      #   uses: softprops/action-gh-release@v3
-      #   with:
-      #     tag_name: ${{ env.RELEASE_TAG }}
-      #     name: ${{ env.RELEASE_TAG }}
-      #     files: tools/build-wsl/wsl/dist/CentOS-7.9-2111.zip
-      #     generate_release_notes: true
-      #     draft: false
-      #     prerelease: false
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          files: tools/build-wsl/wsl/dist/CentOS-7.9-2111.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

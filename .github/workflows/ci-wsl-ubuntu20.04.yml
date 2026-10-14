@@ -2,8 +2,8 @@ name: CI Ubuntu 20.04
 
 on:
   push:
-    branches:
-      - master
+    # branches:
+    #   - master
     tags:
       - '*'
   workflow_dispatch:
@@ -35,14 +35,14 @@ jobs:
           name: Ubuntu-20.04
           path: tools/build-wsl/wsl/dist/Ubuntu20.04.zip
 
-      # - name: Release
-      #   uses: softprops/action-gh-release@v3
-      #   with:
-      #     tag_name: ${{ env.RELEASE_TAG }}
-      #     name: ${{ env.RELEASE_TAG }}
-      #     files: tools/build-wsl/wsl/dist/Ubuntu20.04.zip
-      #     generate_release_notes: true
-      #     draft: false
-      #     prerelease: false
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          files: tools/build-wsl/wsl/dist/Ubuntu20.04.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

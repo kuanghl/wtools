@@ -41,7 +41,7 @@ OUT_DIR="/tmp/guidellm"
 
 # max_duration is only a fallback. Normally the run exits after max_requests is
 # satisfied. This value only prevents an abnormal hang.
-MAX_DURATION_S=1800
+MAX_DURATION_S=3600
 SLEEP_BETWEEN=3
 
 CONCURRENCIES=(1 2 4 8 16)

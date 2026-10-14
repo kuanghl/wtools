@@ -47,7 +47,7 @@ OUT_DIR="/tmp/guidellm"
 
 # max_duration is only a fallback. Normally the run exits after max_requests is
 # satisfied. This value only prevents an abnormal hang.
-MAX_DURATION_S=1800
+MAX_DURATION_S=3600
 SLEEP_BETWEEN=3
 
 CONCURRENCIES=(1 2 4 8 16)
@@ -76,7 +76,7 @@ init_csv() {
 }
 
 # Append a placeholder row (all metrics N/A) when a run fails.
-# The CSV now has 24 columns, so this row contains 4 metadata fields plus 20 N/A fields.
+# The CSV has 24 columns, so this row contains 4 metadata fields plus 20 N/A fields.
 append_failure_row() {
   local res_label=$1 width=$2 height=$3 conc=$4
   echo "$res_label,$width,$height,$conc,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A,N/A" >> "$RESULT_CSV"
@@ -87,7 +87,7 @@ append_failure_row() {
 requests_per_stream() {
   local width=$1 height=$2 out_len=$3
   local pixels=$((width * height))
-  # 4K (>= 3840x2160) or very long outputs: 2 request per stream
+  # 4K (>= 3840x2160) or very long outputs: 2 requests per stream
   # 2K (>= 2560x1440) or long outputs: 3 requests per stream
   # Others: 5 requests per stream
   if [ "$pixels" -ge 8294400 ] || [ "$out_len" -ge 4096 ]; then
@@ -131,22 +131,24 @@ collect_and_append_metrics() {
   fi
 
   # ---- Image / vision metrics ----
-  # GuideLLM tracks image_count, image_pixels, image_bytes in usage metrics.
-  # Fall back to manual calculation if the mean field is not present.
-  MEAN_IMAGE_TOKENS=$(jq -r "
-    .benchmarks[0].metrics.usage.vision.image_tokens.${SCOPE}.mean
-    // (.benchmarks[0].metrics.usage.vision.image_tokens.${SCOPE}.total / .benchmarks[0].metrics.request_totals.${SCOPE})
-    // \"N/A\"" "$json" 2>/dev/null)
+  # GuideLLM 0.8.1 stores image metrics in request-level usage objects.
+  # The aggregated metrics may not contain image_tokens, image_pixels, or image_bytes.
+  # Therefore, we extract them directly from all usage objects and compute the mean.
+  # For image_tokens, the value is typically null in GuideLLM 0.8.1, so it will be N/A.
+  MEAN_IMAGE_TOKENS=$(jq -r '
+    [.. | objects | select(has("image_tokens")) | .image_tokens | select(. != null)] |
+    if length > 0 then (add / length) else "N/A" end
+  ' "$json")
 
-  MEAN_IMAGE_PIXELS=$(jq -r "
-    .benchmarks[0].metrics.usage.vision.image_pixels.${SCOPE}.mean
-    // (.benchmarks[0].metrics.usage.vision.image_pixels.${SCOPE}.total / .benchmarks[0].metrics.request_totals.${SCOPE})
-    // \"N/A\"" "$json" 2>/dev/null)
+  MEAN_IMAGE_PIXELS=$(jq -r '
+    [.. | objects | select(has("image_pixels")) | .image_pixels | select(. != null)] |
+    if length > 0 then (add / length) else "N/A" end
+  ' "$json")
 
-  MEAN_IMAGE_BYTES=$(jq -r "
-    .benchmarks[0].metrics.usage.vision.image_bytes.${SCOPE}.mean
-    // (.benchmarks[0].metrics.usage.vision.image_bytes.${SCOPE}.total / .benchmarks[0].metrics.request_totals.${SCOPE})
-    // \"N/A\"" "$json" 2>/dev/null)
+  MEAN_IMAGE_BYTES=$(jq -r '
+    [.. | objects | select(has("image_bytes")) | .image_bytes | select(. != null)] |
+    if length > 0 then (add / length) else "N/A" end
+  ' "$json")
 
   # ---- Throughputs ----
   if [ "$DURATION" != "0" ] && [ "$DURATION" != "null" ]; then

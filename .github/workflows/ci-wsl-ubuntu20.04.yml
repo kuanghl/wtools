@@ -12,7 +12,7 @@ env:
   RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
 
 jobs:
-  build-wsl-ubuntu20.04:
+  build-wsl-ubuntu20_04:
     runs-on: ubuntu-latest
     steps:
       - name: Dependencies

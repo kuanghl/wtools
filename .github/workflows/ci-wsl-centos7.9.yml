@@ -12,7 +12,7 @@ env:
   RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
 
 jobs:
-  build-wsl-centos7.9:
+  build-wsl-centos7_9:
     runs-on: ubuntu-latest
     steps:
       - name: Dependencies

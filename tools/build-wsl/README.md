@@ -92,9 +92,3 @@ docker build -t semp-centos7.all -f ../docker/Dockerfile.centos7.9.all ../docker
 docker run --rm -v "$(pwd):$(pwd)" -w "$(pwd)" \
     semp-centos7.all bash ./build.sh config/centos7.9.conf
 ```
-
-### CI 构建
-
-通过 GitHub Actions 自动构建（matrix 并行三个发行版），推送 `v*` 标签触发：
-
-- [ci-run-packages.yml](../../.github/workflows/ci-run-packages.yml)

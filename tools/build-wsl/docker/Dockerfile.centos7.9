@@ -40,9 +40,9 @@ RUN yum install -y curl yum-utils && \
     curl -LO https://cmake.org/files/v3.27/cmake-3.27.9-linux-x86_64.tar.gz && \
     tar -xzf cmake-3.27.9-linux-x86_64.tar.gz && \
     mv cmake-3.27.9-linux-x86_64 /opt/cmake && \
-    ln -s /opt/cmake/bin/cmake /usr/local/bin/cmake && \
-    ln -s /opt/cmake/bin/ctest /usr/local/bin/ctest && \
-    ln -s /opt/cmake/bin/cpack /usr/local/bin/cpack && \
+    ln -s /opt/cmake/bin/cmake /usr/bin/cmake && \
+    ln -s /opt/cmake/bin/ctest /usr/bin/ctest && \
+    ln -s /opt/cmake/bin/cpack /usr/bin/cpack && \
     rm -f /tmp/cmake-3.27.9-linux-x86_64.tar.gz && \
     yum clean all
 

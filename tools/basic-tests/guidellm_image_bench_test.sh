@@ -27,13 +27,12 @@
 #   jq 'keys' /tmp/guidellm/bench_720p_c1.json
 #   jq '.benchmarks[0] | keys' /tmp/guidellm/bench_720p_c1.json
 # Check CSV:
-#   column -t -s, /tmp/guidellm_image_benchmark_results.csv
+#   column -t -s, /tmp/GuideLLM_image_bench-<model_name>.csv
 #
 
 set -u
 
 # ----------------------------- Configuration ------------------------------
-RESULT_CSV="/tmp/guidellm_image_benchmark_results.csv"
 
 # ---- Offline configuration ----
 export HF_ENDPOINT=https://hf-mirror.com
@@ -296,6 +295,7 @@ main() {
     fi
   fi
   LOCAL_MODEL_PATH="${LOCAL_MODEL_PATH:-/models/${MODEL_NAME}}"
+  RESULT_CSV="/tmp/GuideLLM_image_bench-${MODEL_NAME}.csv"
 
   init_csv
   run_all_profiles

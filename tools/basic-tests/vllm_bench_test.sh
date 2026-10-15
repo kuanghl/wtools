@@ -9,13 +9,12 @@
 # Inspect a single run:
 #   jq 'keys' /tmp/bench_in128_out1024_c1.json
 # Check CSV:
-#   column -t -s, /tmp/vllm_benchmark_results.csv
+#   column -t -s, /tmp/vLLM_text_bench-<model_name>.csv
 #
 
 set -u
 
 # ----------------------------- Configuration ------------------------------
-RESULT_CSV="/tmp/vllm_benchmark_results.csv"
 BASE_URL="${VLLM_BASE_URL:-http://localhost:8000}"
 LOCAL_MODEL_PATH="${VLLM_MODEL_PATH:-}"
 MODEL_NAME="${VLLM_MODEL:-}"
@@ -205,6 +204,7 @@ main() {
     fi
   fi
   LOCAL_MODEL_PATH="${LOCAL_MODEL_PATH:-/models/${MODEL_NAME}}"
+  RESULT_CSV="/tmp/vLLM_text_bench-${MODEL_NAME}.csv"
 
   init_csv
   run_all_profiles

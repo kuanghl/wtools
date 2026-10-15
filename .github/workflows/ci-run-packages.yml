@@ -2,8 +2,8 @@ name: Build Offline .run Packages
 
 on:
   push:
-    branches:
-      - master
+    # branches:
+    #   - master
     tags:
       - '*'
   workflow_dispatch:
@@ -58,9 +58,9 @@ jobs:
             ${{ matrix.distro }}-app-deps.run \
             ${{ matrix.distro }}-drv-deps.run
 
-      # - name: Create GitHub Release
-      #   if: startsWith(github.ref, 'refs/tags/v')
-      #   uses: softprops/action-gh-release@v2
-      #   with:
-      #     files: dist/${{ matrix.distro }}-offline-deps.tar.gz
-      #     generate_release_notes: true
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.distro }}-offline-deps.tar.gz
+          generate_release_notes: true

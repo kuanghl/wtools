@@ -4,7 +4,8 @@ set -euo pipefail
 # ---- Variables ----
 
 DISTRO_NAME="CentOS 7.9 App Build Dependencies"
-PKG_DIR="$(cd "$(dirname "$0")/packages" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PKG_DIR="${SCRIPT_DIR}/packages"
 PKG_EXT="rpm"
 
 # ---- Functions ----
@@ -31,8 +32,17 @@ list_packages() {
         count=$((count + 1))
         rpm -qp --queryformat '  %{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' "$f" 2>/dev/null
     done
+    if [ -d "$SCRIPT_DIR/extra" ]; then
+        echo ""
+        echo "  Extra bundles:"
+        for t in "$SCRIPT_DIR"/extra/*.tar.gz; do
+            [ -f "$t" ] || continue
+            count=$((count + 1))
+            echo "    $(basename "$t" .tar.gz)/"
+        done
+    fi
     echo ""
-    echo "Total: ${count} packages"
+    echo "Total: ${count} items"
 }
 
 install_packages() {
@@ -42,6 +52,18 @@ install_packages() {
     echo ""
     rpm -Uvh --nodeps "$PKG_DIR"/*."$PKG_EXT" || true
     rpm -Uvh --force "$PKG_DIR"/*."$PKG_EXT" || true
+    if [ -d "$SCRIPT_DIR/extra" ]; then
+        echo ""
+        echo "Installing extra bundles..."
+        for t in "$SCRIPT_DIR"/extra/*.tar.gz; do
+            [ -f "$t" ] || continue
+            echo "  Extracting $(basename "$t") to /"
+            tar xzf "$t" -C /
+        done
+        ln -sf /opt/cmake/bin/cmake /usr/bin/cmake
+        ln -sf /opt/cmake/bin/ctest /usr/bin/ctest
+        ln -sf /opt/cmake/bin/cpack /usr/bin/cpack
+    fi
 }
 
 uninstall_packages() {
@@ -51,15 +73,25 @@ uninstall_packages() {
     echo ""
     local names
     names=$(rpm -qp --queryformat '%{NAME}\n' "$PKG_DIR"/*."$PKG_EXT" 2>/dev/null | sort -u)
-    if [ -z "$names" ]; then
-        echo "No packages found to uninstall."
-        return
+    if [ -n "$names" ]; then
+        local count
+        count=$(echo "$names" | wc -l)
+        echo "Removing ${count} RPM packages..."
+        echo ""
+        echo "$names" | xargs rpm -e --nodeps 2>&1 | grep -v "not installed" || true
     fi
-    local count
-    count=$(echo "$names" | wc -l)
-    echo "Removing ${count} packages..."
-    echo ""
-    echo "$names" | xargs rpm -e --nodeps 2>&1 | grep -v "not installed" || true
+    if [ -d "$SCRIPT_DIR/extra" ]; then
+        echo ""
+        echo "Removing extra bundles..."
+        for t in "$SCRIPT_DIR"/extra/*.tar.gz; do
+            [ -f "$t" ] || continue
+            local name
+            name=$(basename "$t" .tar.gz)
+            echo "  Removing /${name}/"
+            rm -rf "/${name}"
+        done
+        rm -f /usr/bin/cmake /usr/bin/ctest /usr/bin/cpack
+    fi
     echo ""
     echo "Uninstall complete."
 }

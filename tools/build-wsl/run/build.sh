@@ -12,11 +12,22 @@ build_run() {
     local output_name="$3"
     local display_name="$4"
     local work_dir="$5"
+    local extra_dirs=("${@:6}")
 
     local staging="${work_dir}/staging-$(basename "$output_name" .run)"
     mkdir -p "$staging/packages"
     cp "$installer" "$staging/install.sh"
     cp "$pkg_dir"/* "$staging/packages/" 2>/dev/null || true
+
+    if [ ${#extra_dirs[@]} -gt 0 ]; then
+        mkdir -p "$staging/extra"
+        for dir in "${extra_dirs[@]}"; do
+            local name
+            name=$(basename "$dir")
+            tar czf "$staging/extra/${name}.tar.gz" -C "$(dirname "$dir")" "$name"
+            echo "  Bundled extra: ${dir}"
+        done
+    fi
 
     local run_file="${work_dir}/${output_name}"
 
@@ -77,9 +88,11 @@ main() {
 
     echo "--- Generating installers ---"
     build_run "${SCRIPT_ROOT}/installers/${DISTRO_ID}-app.sh" \
-        "$app_pkg_dir" "${DISTRO_ID}-app-deps.run" "${DISTRO_NAME} App Build Dependencies" "$work_dir"
+        "$app_pkg_dir" "${DISTRO_ID}-app-deps.run" "${DISTRO_NAME} App Build Dependencies" \
+        "$work_dir" ${APP_EXTRA_TARS[@]+"${APP_EXTRA_TARS[@]}"}
     build_run "${SCRIPT_ROOT}/installers/${DISTRO_ID}-drv.sh" \
-        "$drv_pkg_dir" "${DISTRO_ID}-drv-deps.run" "${DISTRO_NAME} Driver Build Dependencies" "$work_dir"
+        "$drv_pkg_dir" "${DISTRO_ID}-drv-deps.run" "${DISTRO_NAME} Driver Build Dependencies" \
+        "$work_dir" ${DRV_EXTRA_TARS[@]+"${DRV_EXTRA_TARS[@]}"}
 
     mv "$work_dir"/*.run "${SCRIPT_ROOT}/output/"
 

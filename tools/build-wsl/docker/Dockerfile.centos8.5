@@ -31,8 +31,8 @@ enabled=1\n' > /etc/yum.repos.d/CentOS-Linux-PowerTools.repo && \
     yum clean all && \
     yum makecache
 
-# Install locale support to avoid "Failed to set locale" warnings
-RUN yum install -y glibc-langpack-zh && \
+# Install locale support and yum-utils (for yumdownloader)
+RUN yum install -y glibc-langpack-zh yum-utils && \
     yum clean all
 
 CMD ["/bin/bash"]

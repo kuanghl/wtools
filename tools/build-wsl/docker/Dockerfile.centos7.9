@@ -34,8 +34,8 @@ enabled=0\n' > /etc/yum.repos.d/CentOS-Base.repo && \
     yum clean all && \
     yum makecache fast
 
-# Install CMake 3.27 from pre-built binary
-RUN yum install -y curl && \
+# Install CMake 3.27 from pre-built binary and yum-utils (for yumdownloader)
+RUN yum install -y curl yum-utils && \
     cd /tmp && \
     curl -LO https://cmake.org/files/v3.27/cmake-3.27.9-linux-x86_64.tar.gz && \
     tar -xzf cmake-3.27.9-linux-x86_64.tar.gz && \

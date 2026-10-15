@@ -54,6 +54,7 @@ main() {
     source "$config_file"
 
     local build_id="${DISTRO_ID}-$(date +%Y%m%d%H%M%S)-$$"
+    mkdir -p "${SCRIPT_ROOT}/output"
     local work_dir
     work_dir=$(mktemp -d "${SCRIPT_ROOT}/output/.build-${build_id}.XXXXXX")
     trap 'rm -rf "$work_dir"' EXIT

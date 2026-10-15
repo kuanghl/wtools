@@ -4,7 +4,7 @@ LABEL maintainer="Semptian"
 LABEL description="CentOS 7.9 full build dependencies (GCC 9, CMake 3.27, kernel module build)"
 
 # Install devtoolset-9 (GCC 9) and application build dependencies
-RUN yum install -y \
+RUN yum install -y deltarpm \
     make git diffutils curl \
     readline-devel libpcap-devel libaio-devel zlib-devel \
     devtoolset-9-gcc devtoolset-9-gcc-c++ && \

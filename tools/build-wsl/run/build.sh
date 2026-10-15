@@ -2,6 +2,9 @@
 set -euo pipefail
 
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_WORK_DIR=""
+cleanup() { [ -n "$BUILD_WORK_DIR" ] && rm -rf "$BUILD_WORK_DIR"; }
+trap cleanup EXIT
 
 build_run() {
     local installer="$1"
@@ -20,12 +23,12 @@ build_run() {
     cat > "$run_file" << HEADER
 #!/bin/bash
 # ${display_name} - Offline Installer
-# Usage: sudo ./\$(basename "\$0")
+# Usage: sudo ./\$(basename "\$0") [install|uninstall|list]
 
 set -euo pipefail
 
 if [ "\$(id -u)" -ne 0 ]; then
-    echo "ERROR: Please run as root: sudo ./\$(basename "\$0")"
+    echo "ERROR: Please run as root: sudo ./\$(basename "\$0") [install|uninstall|list]"
     exit 1
 fi
 
@@ -35,7 +38,7 @@ TMPDIR=\$(mktemp -d /tmp/${output_name}.XXXXXX)
 trap 'rm -rf "\$TMPDIR"' EXIT
 tail -n +\$SKIP "\$0" | tar xz -C "\$TMPDIR"
 
-bash "\$TMPDIR/install.sh"
+bash "\$TMPDIR/install.sh" "\$@"
 exit \$?
 
 __PAYLOAD_BELOW__
@@ -55,9 +58,8 @@ main() {
 
     local build_id="${DISTRO_ID}-$(date +%Y%m%d%H%M%S)-$$"
     mkdir -p "${SCRIPT_ROOT}/output"
-    local work_dir
-    work_dir=$(mktemp -d "${SCRIPT_ROOT}/output/.build-${build_id}.XXXXXX")
-    trap 'rm -rf "$work_dir"' EXIT
+    BUILD_WORK_DIR=$(mktemp -d "${SCRIPT_ROOT}/output/.build-${build_id}.XXXXXX")
+    local work_dir="$BUILD_WORK_DIR"
 
     echo "=== Building ${DISTRO_NAME} offline packages [${build_id}] ==="
 

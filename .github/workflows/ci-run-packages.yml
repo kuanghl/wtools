@@ -8,8 +8,14 @@ on:
       - '*'
   workflow_dispatch:
 
+env:
+  RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+
 jobs:
   build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     strategy:
       matrix:
         include:
@@ -19,8 +25,6 @@ jobs:
             base_image: semp-centos8.5
           - distro: ubuntu20.04
             base_image: semp-ubuntu20.04
-
-    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -59,8 +63,12 @@ jobs:
             ${{ matrix.distro }}-drv-deps.run
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
           files: dist/${{ matrix.distro }}-offline-deps.tar.gz
-          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

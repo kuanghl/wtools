@@ -7,6 +7,7 @@ DISTRO_NAME="CentOS 7.9 App Build Dependencies"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PKG_DIR="${SCRIPT_DIR}/packages"
 PKG_EXT="rpm"
+STATE_FILE="/var/lib/centos7.9-app-deps-pre-install.list"
 
 # ---- Functions ----
 
@@ -50,8 +51,8 @@ install_packages() {
     echo "  ${DISTRO_NAME} - Installing"
     echo "============================================"
     echo ""
-    rpm -Uvh --nodeps "$PKG_DIR"/*."$PKG_EXT" || true
-    rpm -Uvh --force "$PKG_DIR"/*."$PKG_EXT" || true
+    rpm -qa --queryformat '%{NAME}\n' | sort -u > "$STATE_FILE"
+    rpm -Uvh --nodeps --force --nodigest --nosignature "$PKG_DIR"/*."$PKG_EXT" || true
     if [ -d "$SCRIPT_DIR/extra" ]; then
         echo ""
         echo "Installing extra bundles..."
@@ -71,15 +72,38 @@ uninstall_packages() {
     echo "  ${DISTRO_NAME} - Uninstalling"
     echo "============================================"
     echo ""
-    local names
-    names=$(rpm -qp --queryformat '%{NAME}\n' "$PKG_DIR"/*."$PKG_EXT" 2>/dev/null | sort -u)
-    if [ -n "$names" ]; then
-        local count
-        count=$(echo "$names" | wc -l)
-        echo "Removing ${count} RPM packages..."
-        echo ""
-        echo "$names" | xargs rpm -e --nodeps 2>&1 | grep -v "not installed" || true
+    
+    # Read package list from packages.list (only top-level packages, not dependencies)
+    local packages_list_file="$(cd "$(dirname "$0")" && pwd)/packages.list"
+    if [ ! -f "$packages_list_file" ]; then
+        echo "No packages.list found, cannot determine which packages to remove."
+        return
     fi
+    
+    local names
+    names=$(cat "$packages_list_file" | sort -u)
+    if [ -z "$names" ]; then
+        echo "No packages found to uninstall."
+        return
+    fi
+    
+    local to_remove="$names"
+    if [ -f "$STATE_FILE" ]; then
+        # Only remove packages that were NOT pre-installed
+        to_remove=$(comm -23 <(echo "$names") <(sort "$STATE_FILE"))
+        rm -f "$STATE_FILE"
+    fi
+    
+    if [ -z "$to_remove" ]; then
+        echo "No new packages to remove (all were pre-installed)."
+        return
+    fi
+    
+    local count
+    count=$(echo "$to_remove" | wc -l)
+    echo "Removing ${count} RPM packages..."
+    echo ""
+    echo "$to_remove" | xargs yum remove -y 2>&1 | tail -5 || true
     if [ -d "$SCRIPT_DIR/extra" ]; then
         echo ""
         echo "Removing extra bundles..."
@@ -93,6 +117,13 @@ uninstall_packages() {
         rm -f /usr/bin/cmake /usr/bin/ctest /usr/bin/cpack
     fi
     echo ""
+    
+    # Clean up orphaned dependencies
+    echo "Cleaning up orphaned dependencies..."
+    yum makecache -y >/dev/null 2>&1 || true
+    yum autoremove -y 2>&1 | tail -5 || true
+    echo ""
+    
     echo "Uninstall complete."
 }
 

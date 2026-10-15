@@ -19,6 +19,11 @@ build_run() {
     cp "$installer" "$staging/install.sh"
     cp "$pkg_dir"/* "$staging/packages/" 2>/dev/null || true
 
+    # Create package list file for uninstall (only top-level packages, not dependencies)
+    if [ -f "${installer%.sh}-packages.list" ]; then
+        cp "${installer%.sh}-packages.list" "$staging/packages.list"
+    fi
+
     if [ ${#extra_dirs[@]} -gt 0 ]; then
         mkdir -p "$staging/extra"
         for dir in "${extra_dirs[@]}"; do
@@ -46,7 +51,7 @@ fi
 echo "Extracting ${display_name}..."
 SKIP=\$(awk '/^__PAYLOAD_BELOW__\$/{print NR; exit}' "\$0")
 TMPDIR=\$(mktemp -d /tmp/${output_name}.XXXXXX)
-trap 'rm -rf "\$TMPDIR"' EXIT
+trap '/usr/bin/rm -rf "\$TMPDIR"' EXIT
 tail -n +\$((SKIP + 1)) "\$0" | tar xz -C "\$TMPDIR"
 
 bash "\$TMPDIR/install.sh" "\$@"
@@ -81,10 +86,16 @@ main() {
     echo "--- Downloading app packages ---"
     download_packages "$app_pkg_dir" "${APP_PACKAGES[@]}"
     echo "App packages: $(ls "$app_pkg_dir"/*."$PKG_EXT" 2>/dev/null | wc -l) ${PKG_EXT^^}s"
+    
+    # Generate app packages list for uninstall
+    printf '%s\n' "${APP_PACKAGES[@]}" > "${SCRIPT_ROOT}/installers/${DISTRO_ID}-app-packages.list"
 
     echo "--- Downloading drv packages ---"
     download_packages "$drv_pkg_dir" "${DRV_PACKAGES[@]}"
     echo "Drv packages: $(ls "$drv_pkg_dir"/*."$PKG_EXT" 2>/dev/null | wc -l) ${PKG_EXT^^}s"
+    
+    # Generate drv packages list for uninstall
+    printf '%s\n' "${DRV_PACKAGES[@]}" > "${SCRIPT_ROOT}/installers/${DISTRO_ID}-drv-packages.list"
 
     echo "--- Generating installers ---"
     build_run "${SCRIPT_ROOT}/installers/${DISTRO_ID}-app.sh" \

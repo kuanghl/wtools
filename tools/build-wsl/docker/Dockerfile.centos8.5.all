@@ -4,7 +4,7 @@ LABEL maintainer="Semptian"
 LABEL description="CentOS 8.5 full build dependencies (GCC, CMake, kernel module build)"
 
 # Install application build dependencies
-RUN yum install -y deltarpm \
+RUN yum install -y\
     gcc gcc-c++ make cmake git diffutils \
     readline-devel libpcap-devel libaio-devel zlib-devel && \
     yum clean all

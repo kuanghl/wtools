@@ -45,6 +45,14 @@ RUN yum install -y curl yum-utils && \
     ln -s /opt/cmake/bin/cpack /usr/bin/cpack && \
     rm -f /tmp/cmake-3.27.9-linux-x86_64.tar.gz && \
     yum clean all
+# COPY cmake-3.27.9-linux-x86_64.tar.gz /tmp/
+# RUN cd /tmp && \
+#     tar -xzf cmake-3.27.9-linux-x86_64.tar.gz && \
+#     mv cmake-3.27.9-linux-x86_64 /opt/cmake && \
+#     ln -s /opt/cmake/bin/cmake /usr/bin/cmake && \
+#     ln -s /opt/cmake/bin/ctest /usr/bin/ctest && \
+#     ln -s /opt/cmake/bin/cpack /usr/bin/cpack && \
+#     rm -f cmake-3.27.9-linux-x86_64.tar.gz
 
 # Add CentOS Vault repo for devtoolset (SCL)
 # For Install devtoolset-9 (GCC 9) and build dependencies

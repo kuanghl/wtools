@@ -47,7 +47,7 @@ echo "Extracting ${display_name}..."
 SKIP=\$(awk '/^__PAYLOAD_BELOW__\$/{print NR; exit}' "\$0")
 TMPDIR=\$(mktemp -d /tmp/${output_name}.XXXXXX)
 trap 'rm -rf "\$TMPDIR"' EXIT
-tail -n +\$SKIP "\$0" | tar xz -C "\$TMPDIR"
+tail -n +\$((SKIP + 1)) "\$0" | tar xz -C "\$TMPDIR"
 
 bash "\$TMPDIR/install.sh" "\$@"
 exit \$?

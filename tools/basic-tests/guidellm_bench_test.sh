@@ -34,9 +34,9 @@ export HF_ENDPOINT=https://hf-mirror.com
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 
-LOCAL_MODEL_PATH="/models/Qwen3.8-27B"
-MODEL_NAME="Qwen3.8-27B"
-TARGET_URL="http://localhost:8000"
+LOCAL_MODEL_PATH="${VLLM_MODEL_PATH:-}"
+MODEL_NAME="${VLLM_MODEL:-}"
+TARGET_URL="${VLLM_BASE_URL:-http://localhost:8000}"
 OUT_DIR="/tmp/guidellm"
 
 # max_duration is only a fallback. Normally the run exits after max_requests is
@@ -66,6 +66,34 @@ CSV_HEADER="input_len,output_len,concurrency,completed,incomplete,failed,duratio
 init_csv() {
   echo "$CSV_HEADER" > "$RESULT_CSV"
   mkdir -p "$OUT_DIR"
+}
+
+has_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+# Auto-detect model from /v1/models if not specified
+detect_model() {
+  local resp_file
+  resp_file=$(mktemp /tmp/detect_model.XXXXXX.json)
+
+  local http_code
+  http_code=$(curl -s -o "$resp_file" -w "%{http_code}" \
+    --max-time 30 "${TARGET_URL}/v1/models" 2>/dev/null)
+
+  if [ "$http_code" = "200" ] && [ -s "$resp_file" ]; then
+    local model_id
+    if has_cmd jq; then
+      model_id=$(jq -r '.data[0].id // empty' "$resp_file" 2>/dev/null)
+    else
+      model_id=$(grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' "$resp_file" 2>/dev/null \
+        | head -1 | sed 's/.*:[[:space:]]*"//;s/"$//')
+    fi
+    rm -f "$resp_file"
+    echo "$model_id"
+    return
+  fi
+
+  rm -f "$resp_file"
+  echo ""
 }
 
 # Append a placeholder row (all metrics N/A) when a run fails.
@@ -221,6 +249,19 @@ run_all_profiles() {
 # ---------------------------------- Main ----------------------------------
 
 main() {
+  # Auto-detect model if not specified
+  if [ -z "$MODEL_NAME" ]; then
+    MODEL_NAME=$(detect_model)
+    if [ -n "$MODEL_NAME" ]; then
+      echo "Auto-detected model: $MODEL_NAME"
+    else
+      echo "ERROR: No model specified and auto-detection failed"
+      echo "Set VLLM_MODEL environment variable or use -m option"
+      exit 1
+    fi
+  fi
+  LOCAL_MODEL_PATH="${LOCAL_MODEL_PATH:-/models/${MODEL_NAME}}"
+
   init_csv
   run_all_profiles
 

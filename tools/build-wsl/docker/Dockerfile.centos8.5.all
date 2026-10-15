@@ -1,0 +1,24 @@
+FROM semp-centos8.5
+
+LABEL maintainer="Semptian"
+LABEL description="CentOS 8.5 full build dependencies (GCC, CMake, kernel module build)"
+
+# Install application build dependencies
+RUN yum install -y \
+    gcc gcc-c++ make cmake git diffutils \
+    readline-devel libpcap-devel libaio-devel zlib-devel && \
+    yum clean all
+
+# Install kernel module build dependencies (kernel-devel latest available from repo)
+# If a specific kernel version is needed at runtime, install with:
+#   yum install -y kernel-devel-$(uname -r) kernel-headers-$(uname -r)
+RUN yum install -y \
+    kernel-headers kernel-devel \
+    elfutils-libelf-devel openssl-devel bc flex && \
+    yum clean all
+
+# Verify toolchain versions
+RUN gcc --version | head -1 && \
+    cmake --version | head -1
+
+CMD ["/bin/bash"]

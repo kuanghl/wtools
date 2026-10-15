@@ -1,0 +1,66 @@
+name: Build Offline .run Packages
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - '*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - distro: centos7.9
+            base_image: semp-centos7
+          - distro: centos8.5
+            base_image: semp-centos8.5
+          - distro: ubuntu20.04
+            base_image: semp-ubuntu20.04
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build base Docker image
+        run: |
+          docker build \
+            -t ${{ matrix.base_image }} \
+            -f tools/build-wsl/docker/Dockerfile.${{ matrix.distro }} \
+            tools/build-wsl/docker/
+
+      - name: Build .all Docker image (pre-installed deps)
+        run: |
+          docker build \
+            -t ${{ matrix.base_image }}.all \
+            -f tools/build-wsl/docker/Dockerfile.${{ matrix.distro }}.all \
+            tools/build-wsl/docker/
+
+      - name: Build .run packages
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}/tools/build-wsl/run:${GITHUB_WORKSPACE}/tools/build-wsl/run" \
+            -w "${GITHUB_WORKSPACE}/tools/build-wsl/run" \
+            ${{ matrix.base_image }}.all \
+            bash ./build.sh config/${{ matrix.distro }}.conf
+
+      - name: Package release archive
+        run: |
+          mkdir -p dist
+          cp tools/build-wsl/run/output/${{ matrix.distro }}-app-deps.run dist/
+          cp tools/build-wsl/run/output/${{ matrix.distro }}-drv-deps.run dist/
+          tar czf dist/${{ matrix.distro }}-offline-deps.tar.gz \
+            -C dist \
+            ${{ matrix.distro }}-app-deps.run \
+            ${{ matrix.distro }}-drv-deps.run
+
+      # - name: Create GitHub Release
+      #   if: startsWith(github.ref, 'refs/tags/v')
+      #   uses: softprops/action-gh-release@v2
+      #   with:
+      #     files: dist/${{ matrix.distro }}-offline-deps.tar.gz
+      #     generate_release_notes: true

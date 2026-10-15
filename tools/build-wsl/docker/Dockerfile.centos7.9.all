@@ -1,0 +1,29 @@
+FROM semp-centos7
+
+LABEL maintainer="Semptian"
+LABEL description="CentOS 7.9 full build dependencies (GCC 9, CMake 3.27, kernel module build)"
+
+# Install devtoolset-9 (GCC 9) and application build dependencies
+RUN yum install -y \
+    make git diffutils curl \
+    readline-devel libpcap-devel libaio-devel zlib-devel \
+    devtoolset-9-gcc devtoolset-9-gcc-c++ && \
+    yum clean all
+
+# Install kernel module build dependencies (kernel-devel latest available from repo)
+# If a specific kernel version is needed at runtime, install with:
+#   yum install -y kernel-devel-$(uname -r) kernel-headers-$(uname -r)
+RUN yum install -y \
+    kernel-headers kernel-devel \
+    elfutils-libelf-devel openssl-devel bc flex perl && \
+    yum clean all
+
+# Enable devtoolset-9 by default
+RUN echo "source /opt/rh/devtoolset-9/enable" >> /etc/bashrc
+
+# CMake 3.27 is already installed in the base image at /opt/cmake
+# Verify toolchain versions
+RUN bash -lc "gcc --version | head -1" && \
+    cmake --version | head -1
+
+CMD ["/bin/bash"]

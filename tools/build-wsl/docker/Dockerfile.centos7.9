@@ -1,37 +1,48 @@
 FROM centos:7
 
 LABEL maintainer="Semptian"
-LABEL description="CentOS 7.9 with Alibaba Cloud mirrors, CMake 3.27 and GCC 9 (EOL)"
+LABEL description="CentOS 7.9 with configurable mirrors, CMake 3.27 and GCC 9 (EOL)"
 
-# CentOS 7 is EOL since 2024-06-30, use Alibaba Cloud mirrors pinned to 7.9.2009
+# CentOS 7 is EOL since 2024-06-30, use vault mirrors pinned to 7.9.2009
 # repo:/etc/yum.repos.d/
-# https://mirrors.aliyun.com/centos/7.9.2009/
-RUN rm -f /etc/yum.repos.d/*.repo && \
+# Aliyun: https://mirrors.aliyun.com/centos/7.9.2009/
+# Official: http://vault.centos.org/7.9.2009/
+# Set MIRROR=aliyun for Alibaba Cloud mirrors, or MIRROR=official for official vault.
+# Example: docker build --build-arg MIRROR=official -t centos7-official .
+ARG MIRROR=aliyun
+
+RUN set -eu; \
+    case "$MIRROR" in \
+      aliyun) MAINURL="https://mirrors.aliyun.com/centos/7.9.2009" ;; \
+      official) MAINURL="http://vault.centos.org/7.9.2009" ;; \
+      *) echo "Unsupported MIRROR: $MIRROR (use 'aliyun' or 'official')"; exit 1 ;; \
+    esac; \
+    rm -f /etc/yum.repos.d/*.repo; \
     printf '[base]\n\
 name=CentOS-7.9.2009 - Base\n\
-baseurl=https://mirrors.aliyun.com/centos/7.9.2009/os/$basearch/\n\
+baseurl=%s/os/$basearch/\n\
 gpgcheck=1\n\
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7\n\
 \n\
 [updates]\n\
 name=CentOS-7.9.2009 - Updates\n\
-baseurl=https://mirrors.aliyun.com/centos/7.9.2009/updates/$basearch/\n\
+baseurl=%s/updates/$basearch/\n\
 gpgcheck=1\n\
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7\n\
 \n\
 [extras]\n\
 name=CentOS-7.9.2009 - Extras\n\
-baseurl=https://mirrors.aliyun.com/centos/7.9.2009/extras/$basearch/\n\
+baseurl=%s/extras/$basearch/\n\
 gpgcheck=1\n\
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7\n\
 \n\
 [centosplus]\n\
 name=CentOS-7.9.2009 - Plus\n\
-baseurl=https://mirrors.aliyun.com/centos/7.9.2009/centosplus/$basearch/\n\
+baseurl=%s/centosplus/$basearch/\n\
 gpgcheck=1\n\
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7\n\
-enabled=0\n' > /etc/yum.repos.d/CentOS-Base.repo && \
-    yum clean all && \
+enabled=0\n' "$MAINURL" "$MAINURL" "$MAINURL" "$MAINURL" > /etc/yum.repos.d/CentOS-Base.repo; \
+    yum clean all; \
     yum makecache fast
 
 # Install CMake 3.27 from pre-built binary and yum-utils (for yumdownloader)
@@ -56,18 +67,24 @@ RUN yum install -y curl yum-utils && \
 
 # Add CentOS Vault repo for devtoolset (SCL)
 # For Install devtoolset-9 (GCC 9) and build dependencies
-RUN printf '[vault-sclo]\n\
+RUN set -eu; \
+    case "$MIRROR" in \
+      aliyun) VAULTURL="https://mirrors.aliyun.com/centos-vault/7.9.2009" ;; \
+      official) VAULTURL="http://vault.centos.org/7.9.2009" ;; \
+      *) echo "Unsupported MIRROR: $MIRROR"; exit 1 ;; \
+    esac; \
+    printf '[vault-sclo]\n\
 name=CentOS-7.9.2009 - Vault SCL\n\
-baseurl=https://mirrors.aliyun.com/centos-vault/7.9.2009/sclo/x86_64/sclo/\n\
+baseurl=%s/sclo/$basearch/sclo/\n\
 gpgcheck=0\n\
 enabled=1\n\
 \n\
 [vault-rh]\n\
 name=CentOS-7.9.2009 - Vault RH\n\
-baseurl=https://mirrors.aliyun.com/centos-vault/7.9.2009/sclo/x86_64/rh/\n\
+baseurl=%s/sclo/$basearch/rh/\n\
 gpgcheck=0\n\
-enabled=1\n' > /etc/yum.repos.d/CentOS-Vault.repo && \
-    yum clean all && \
+enabled=1\n' "$VAULTURL" "$VAULTURL" > /etc/yum.repos.d/CentOS-Vault.repo; \
+    yum clean all; \
     yum makecache
 
 CMD ["/bin/bash"]

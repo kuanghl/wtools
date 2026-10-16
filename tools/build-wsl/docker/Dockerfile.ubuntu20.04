@@ -1,15 +1,25 @@
 FROM ubuntu:20.04
 
 LABEL maintainer="Semptian"
-LABEL description="Ubuntu 20.04 with Alibaba Cloud mirrors"
+LABEL description="Ubuntu 20.04 with configurable mirrors"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Switch to Alibaba Cloud mirrors
-# https://mirrors.aliyun.com/ubuntu/
-RUN sed -i s/archive.ubuntu.com/mirrors.aliyun.com/g /etc/apt/sources.list && \
-    sed -i s/security.ubuntu.com/mirrors.aliyun.com/g /etc/apt/sources.list && \
-    apt-get clean && \
+# Choose mirror: aliyun (default) or official.
+# Aliyun: https://mirrors.aliyun.com/ubuntu/
+# Official: http://archive.ubuntu.com/ubuntu/ and http://security.ubuntu.com/ubuntu/
+# Example: docker build --build-arg MIRROR=official -t ubuntu2004-official .
+ARG MIRROR=aliyun
+
+RUN set -eu; \
+    case "$MIRROR" in \
+      aliyun) ARCHIVE_HOST="mirrors.aliyun.com"; SECURITY_HOST="mirrors.aliyun.com" ;; \
+      official) ARCHIVE_HOST="archive.ubuntu.com"; SECURITY_HOST="security.ubuntu.com" ;; \
+      *) echo "Unsupported MIRROR: $MIRROR (use 'aliyun' or 'official')"; exit 1 ;; \
+    esac; \
+    sed -i "s|archive.ubuntu.com|$ARCHIVE_HOST|g" /etc/apt/sources.list; \
+    sed -i "s|security.ubuntu.com|$SECURITY_HOST|g" /etc/apt/sources.list; \
+    apt-get clean; \
     apt-get update
 
 CMD ["/bin/bash"]

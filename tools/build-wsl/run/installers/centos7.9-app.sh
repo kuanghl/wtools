@@ -68,17 +68,18 @@ install_packages() {
             local pkg_name file_ver installed_ver
             pkg_name=$(rpm -qp --queryformat '%{NAME}' "$pkg_file" 2>/dev/null)
             file_ver=$(rpm -qp --queryformat '%{VERSION}-%{RELEASE}' "$pkg_file" 2>/dev/null)
-            installed_ver=$(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "$pkg_name" 2>/dev/null)
-            if [ $? -eq 0 ] && [ "$(printf '%s\n%s\n' "$installed_ver" "$file_ver" | sort -V | tail -1)" = "$installed_ver" ]; then
-                skipped=$((skipped + 1))
-                continue
+            if installed_ver=$(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "$pkg_name" 2>/dev/null); then
+                if [ "$(printf '%s\n%s\n' "$installed_ver" "$file_ver" | sort -V | tail -1)" = "$installed_ver" ]; then
+                    skipped=$((skipped + 1))
+                    continue
+                fi
             fi
             files_to_install+=("$pkg_file")
         done
 
         if [ ${#files_to_install[@]} -gt 0 ]; then
             echo "Installing ${#files_to_install[@]} packages (skipped $skipped up-to-date)..."
-            rpm -Uvh --nodeps --nodigest --nosignature "${files_to_install[@]}" || true
+            rpm -Uvh --nodeps --force --nodigest --nosignature "${files_to_install[@]}" || true
         else
             echo "All packages are up-to-date (skipped $skipped)."
         fi

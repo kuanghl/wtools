@@ -107,6 +107,10 @@ main() {
 
     mv "$work_dir"/*.run "${SCRIPT_ROOT}/output/"
 
+    # Clean up generated packages.list files from installers directory
+    rm -f "${SCRIPT_ROOT}/installers/${DISTRO_ID}-app-packages.list"
+    rm -f "${SCRIPT_ROOT}/installers/${DISTRO_ID}-drv-packages.list"
+
     echo "=== ${DISTRO_NAME} build complete [${build_id}] ==="
     ls -lh "${SCRIPT_ROOT}/output/${DISTRO_ID}"-*.run
 }

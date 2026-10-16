@@ -68,7 +68,7 @@ docker run --rm -it \
     -w /workspace \
     semp-ubuntu20.04 /bin/bash
 
-# 应用程序依赖
+# 应用程序依赖，docker即可编译测试
 # CentOS 7:
 yum install -y make git \
     readline-devel libpcap-devel libaio-devel zlib-devel diffutils 
@@ -97,7 +97,7 @@ docker run --rm -it \
     -w /workspace \
     semp-centos7 /bin/bash
 
-# 驱动编译依赖
+# 驱动编译依赖，编译平台依赖虚拟机，因为涉及内核编译
 # docker 中 uname -r 会默认使用宿主机的，所以不对，需要使用以下方式匹配一个最新的版本
 # CentOS 7: 
 # yum list --showduplicates kernel-devel

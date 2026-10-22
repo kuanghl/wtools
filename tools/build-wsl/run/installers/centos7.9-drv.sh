@@ -4,9 +4,46 @@ set -euo pipefail
 # ---- Variables ----
 
 DISTRO_NAME="CentOS 7.9 Driver Build Dependencies"
-PKG_DIR="$(cd "$(dirname "$0")/packages" && pwd)"
+INSTALLER_ID="centos7.9-drv"
 PKG_EXT="rpm"
-STATE_FILE="/var/lib/centos7.9-drv-deps-pre-install.list"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PKG_DIR="${SCRIPT_DIR}/packages"
+INSTALLED_FILE="/var/lib/${INSTALLER_ID}-installed.list"
+
+# ---- Package manager functions (RPM/Yum) ----
+
+pkg_list_installed() {
+    rpm -qa --queryformat '%{NAME}\n'
+}
+
+pkg_query_name() {
+    rpm -qp --queryformat '%{NAME}' "$1" 2>/dev/null
+}
+
+pkg_query_version() {
+    rpm -qp --queryformat '%{VERSION}-%{RELEASE}' "$1" 2>/dev/null
+}
+
+pkg_query_installed_ver() {
+    rpm -q --queryformat '%{VERSION}-%{RELEASE}' "$1" 2>/dev/null
+}
+
+pkg_format_list_entry() {
+    rpm -qp --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}' "$1" 2>/dev/null
+}
+
+pkg_install_files() {
+    rpm -Uvh --nodeps --force --nodigest --nosignature "$@" || true
+}
+
+pkg_remove_single() {
+    rpm -e "$1" 2>/dev/null
+}
+
+pkg_autoremove() {
+    yum makecache -y >/dev/null 2>&1 || true
+    yum autoremove -y 2>&1 | tail -5 || true
+}
 
 # ---- Functions ----
 
@@ -16,7 +53,7 @@ Usage: $(basename "$0") [ACTION] [OPTIONS]
 
 Actions:
   install    Install packages (default)
-  uninstall  Remove installed packages
+  uninstall  Remove installed packages (soft — skips what cannot be removed)
   list       List bundled packages
 
 Options:
@@ -33,10 +70,18 @@ list_packages() {
     for f in "$PKG_DIR"/*."$PKG_EXT"; do
         [ -f "$f" ] || continue
         count=$((count + 1))
-        rpm -qp --queryformat '  %{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' "$f" 2>/dev/null
+        echo "  $(pkg_format_list_entry "$f")"
     done
     echo ""
-    echo "Total: ${count} packages"
+    echo "Total: ${count} items"
+    echo ""
+    if [ -f "$INSTALLED_FILE" ]; then
+        local tracked
+        tracked=$(wc -l < "$INSTALLED_FILE")
+        echo "Status: installed ($tracked packages tracked)"
+    else
+        echo "Status: not installed"
+    fi
 }
 
 install_packages() {
@@ -46,19 +91,29 @@ install_packages() {
     echo "  ${DISTRO_NAME} - Installing"
     echo "============================================"
     echo ""
-    rpm -qa --queryformat '%{NAME}\n' | sort -u > "$STATE_FILE"
+
+    local pre_tmp post_tmp
+    pre_tmp=$(mktemp)
+    post_tmp=$(mktemp)
+    pkg_list_installed | sort -u > "$pre_tmp"
+
+    local pkg_files=("$PKG_DIR"/*."$PKG_EXT")
+    if [ ! -f "${pkg_files[0]}" ]; then
+        echo "No package files found in $PKG_DIR"
+        rm -f "$pre_tmp" "$post_tmp"
+        return 1
+    fi
 
     if [ "$force" = "true" ]; then
-        rpm -Uvh --nodeps --force --nodigest --nosignature "$PKG_DIR"/*."$PKG_EXT" || true
+        pkg_install_files "${pkg_files[@]}"
     else
         local files_to_install=()
         local skipped=0
-        for pkg_file in "$PKG_DIR"/*."$PKG_EXT"; do
-            [ -f "$pkg_file" ] || continue
+        for pkg_file in "${pkg_files[@]}"; do
             local pkg_name file_ver installed_ver
-            pkg_name=$(rpm -qp --queryformat '%{NAME}' "$pkg_file" 2>/dev/null)
-            file_ver=$(rpm -qp --queryformat '%{VERSION}-%{RELEASE}' "$pkg_file" 2>/dev/null)
-            if installed_ver=$(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "$pkg_name" 2>/dev/null); then
+            pkg_name=$(pkg_query_name "$pkg_file")
+            file_ver=$(pkg_query_version "$pkg_file")
+            if installed_ver=$(pkg_query_installed_ver "$pkg_name"); then
                 if [ "$(printf '%s\n%s\n' "$installed_ver" "$file_ver" | sort -V | tail -1)" = "$installed_ver" ]; then
                     skipped=$((skipped + 1))
                     continue
@@ -69,72 +124,96 @@ install_packages() {
 
         if [ ${#files_to_install[@]} -gt 0 ]; then
             echo "Installing ${#files_to_install[@]} packages (skipped $skipped up-to-date)..."
-            rpm -Uvh --nodeps --force --nodigest --nosignature "${files_to_install[@]}" || true
+            pkg_install_files "${files_to_install[@]}"
         else
             echo "All packages are up-to-date (skipped $skipped)."
         fi
+    fi
+
+    pkg_list_installed | sort -u > "$post_tmp"
+    local new_tmp
+    new_tmp=$(mktemp)
+    comm -13 "$pre_tmp" "$post_tmp" > "$new_tmp"
+    if [ -f "$INSTALLED_FILE" ]; then
+        sort -u "$INSTALLED_FILE" "$new_tmp" > "${INSTALLED_FILE}.tmp"
+        mv "${INSTALLED_FILE}.tmp" "$INSTALLED_FILE"
+    else
+        cp "$new_tmp" "$INSTALLED_FILE"
+    fi
+    rm -f "$pre_tmp" "$post_tmp" "$new_tmp"
+
+    local tracked
+    tracked=$(wc -l < "$INSTALLED_FILE")
+    echo ""
+    echo "Tracked $tracked new packages for uninstall (including dependencies)."
+
+    # Post-install
+    echo ""
+    echo "=== Installation Complete ==="
+    local kver
+    kver=$(uname -r)
+    echo "Running kernel: $kver"
+    if [ -d "/usr/src/kernels/${kver}" ]; then
+        echo "kernel-devel matched: /usr/src/kernels/${kver}"
+    else
+        echo "WARNING: kernel-devel version may not match running kernel."
+        echo "Available: $(ls /usr/src/kernels/ 2>/dev/null || echo 'none')"
     fi
 }
 
 uninstall_packages() {
     echo "============================================"
-    echo "  ${DISTRO_NAME} - Uninstalling"
+    echo "  ${DISTRO_NAME} - Uninstalling (soft)"
     echo "============================================"
     echo ""
-    
-    # Read package list from packages.list (only top-level packages, not dependencies)
-    local packages_list_file="$(cd "$(dirname "$0")" && pwd)/packages.list"
-    if [ ! -f "$packages_list_file" ]; then
-        echo "No packages.list found, cannot determine which packages to remove."
-        return
-    fi
-    
-    local names
-    names=$(cat "$packages_list_file" | sort -u)
-    if [ -z "$names" ]; then
-        echo "No packages found to uninstall."
-        return
-    fi
-    
-    local to_remove="$names"
-    if [ -f "$STATE_FILE" ]; then
-        # Only remove packages that were NOT pre-installed
-        to_remove=$(comm -23 <(echo "$names") <(sort "$STATE_FILE"))
-        rm -f "$STATE_FILE"
-    fi
-    
-    if [ -z "$to_remove" ]; then
-        echo "No new packages to remove (all were pre-installed)."
-        return
-    fi
-    
-    local count
-    count=$(echo "$to_remove" | wc -l)
-    echo "Removing ${count} packages..."
-    echo ""
-    echo "$to_remove" | xargs yum remove -y 2>&1 | tail -5 || true
-    echo ""
-    
-    # Clean up orphaned dependencies
-    echo "Cleaning up orphaned dependencies..."
-    yum makecache -y >/dev/null 2>&1 || true
-    yum autoremove -y 2>&1 | tail -5 || true
-    echo ""
-    
-    echo "Uninstall complete."
-}
 
-post_install() {
-    echo ""
-    echo "=== Installation Complete ==="
-    KVER=$(uname -r)
-    echo "Running kernel: $KVER"
-    if [ -d "/usr/src/kernels/${KVER}" ]; then
-        echo "kernel-devel matched: /usr/src/kernels/${KVER}"
-    else
-        echo "WARNING: kernel-devel version may not match running kernel."
-        echo "Available: $(ls /usr/src/kernels/ 2>/dev/null || echo 'none')"
+    local removed=0 skipped_missing=0 skipped_fail=0
+    local has_records=false
+
+    if [ -f "$INSTALLED_FILE" ]; then
+        has_records=true
+        local total
+        total=$(wc -l < "$INSTALLED_FILE")
+
+        if [ "$total" -gt 0 ]; then
+            echo "Processing $total tracked packages..."
+            echo ""
+
+            while IFS= read -r pkg_name; do
+                [ -z "$pkg_name" ] && continue
+
+                if ! pkg_query_installed_ver "$pkg_name" &>/dev/null; then
+                    echo "  SKIP (not installed): $pkg_name"
+                    skipped_missing=$((skipped_missing + 1))
+                    continue
+                fi
+
+                if pkg_remove_single "$pkg_name"; then
+                    echo "  REMOVED: $pkg_name"
+                    removed=$((removed + 1))
+                else
+                    echo "  SKIP (cannot remove): $pkg_name"
+                    skipped_fail=$((skipped_fail + 1))
+                fi
+            done < "$INSTALLED_FILE"
+        fi
+
+        rm -f "$INSTALLED_FILE"
     fi
+
+    if [ "$has_records" = false ]; then
+        echo "No installation record found."
+    fi
+
+    echo ""
+    echo "Package summary: removed=$removed, not-installed=$skipped_missing, cannot-remove=$skipped_fail"
+
+    echo ""
+    echo "Cleaning up orphaned dependencies..."
+    pkg_autoremove
+
+    echo ""
+    echo "Uninstall complete."
 }
 
 # ---- Main ----
@@ -152,16 +231,9 @@ done
 ACTION="${ACTION:-install}"
 
 case "$ACTION" in
-    install)
-        install_packages "$FORCE"
-        post_install
-        ;;
+    install)    install_packages "$FORCE" ;;
     uninstall)  uninstall_packages ;;
     list)       list_packages ;;
     help)       usage ;;
-    *)
-        echo "Unknown action: $ACTION"
-        usage
-        exit 1
-        ;;
+    *)          echo "Unknown action: $ACTION"; usage; exit 1 ;;
 esac

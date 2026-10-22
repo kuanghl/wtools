@@ -4,10 +4,46 @@ set -euo pipefail
 # ---- Variables ----
 
 DISTRO_NAME="CentOS 7.9 App Build Dependencies"
+INSTALLER_ID="centos7.9-app"
+PKG_EXT="rpm"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PKG_DIR="${SCRIPT_DIR}/packages"
-PKG_EXT="rpm"
-STATE_FILE="/var/lib/centos7.9-app-deps-pre-install.list"
+INSTALLED_FILE="/var/lib/${INSTALLER_ID}-installed.list"
+
+# ---- Package manager functions (RPM/Yum) ----
+
+pkg_list_installed() {
+    rpm -qa --queryformat '%{NAME}\n'
+}
+
+pkg_query_name() {
+    rpm -qp --queryformat '%{NAME}' "$1" 2>/dev/null
+}
+
+pkg_query_version() {
+    rpm -qp --queryformat '%{VERSION}-%{RELEASE}' "$1" 2>/dev/null
+}
+
+pkg_query_installed_ver() {
+    rpm -q --queryformat '%{VERSION}-%{RELEASE}' "$1" 2>/dev/null
+}
+
+pkg_format_list_entry() {
+    rpm -qp --queryformat '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}' "$1" 2>/dev/null
+}
+
+pkg_install_files() {
+    rpm -Uvh --nodeps --force --nodigest --nosignature "$@" || true
+}
+
+pkg_remove_single() {
+    rpm -e "$1" 2>/dev/null
+}
+
+pkg_autoremove() {
+    yum makecache -y >/dev/null 2>&1 || true
+    yum autoremove -y 2>&1 | tail -5 || true
+}
 
 # ---- Functions ----
 
@@ -17,7 +53,7 @@ Usage: $(basename "$0") [ACTION] [OPTIONS]
 
 Actions:
   install    Install packages (default)
-  uninstall  Remove installed packages
+  uninstall  Remove installed packages (soft — skips what cannot be removed)
   list       List bundled packages
 
 Options:
@@ -34,19 +70,26 @@ list_packages() {
     for f in "$PKG_DIR"/*."$PKG_EXT"; do
         [ -f "$f" ] || continue
         count=$((count + 1))
-        rpm -qp --queryformat '  %{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' "$f" 2>/dev/null
+        echo "  $(pkg_format_list_entry "$f")"
     done
-    if [ -d "$SCRIPT_DIR/extra" ]; then
+    if [ -d "$SCRIPT_DIR/extra" ] && [ -f "$SCRIPT_DIR/extra/.extra-manifest" ]; then
         echo ""
         echo "  Extra bundles:"
-        for t in "$SCRIPT_DIR"/extra/*.tar.gz; do
-            [ -f "$t" ] || continue
+        while IFS= read -r rel_path; do
             count=$((count + 1))
-            echo "    $(basename "$t" .tar.gz)/"
-        done
+            echo "    /${rel_path}/"
+        done < "$SCRIPT_DIR/extra/.extra-manifest"
     fi
     echo ""
     echo "Total: ${count} items"
+    echo ""
+    if [ -f "$INSTALLED_FILE" ]; then
+        local tracked
+        tracked=$(wc -l < "$INSTALLED_FILE")
+        echo "Status: installed ($tracked packages tracked)"
+    else
+        echo "Status: not installed"
+    fi
 }
 
 install_packages() {
@@ -56,19 +99,31 @@ install_packages() {
     echo "  ${DISTRO_NAME} - Installing"
     echo "============================================"
     echo ""
-    rpm -qa --queryformat '%{NAME}\n' | sort -u > "$STATE_FILE"
+
+    # Snapshot pre-install state
+    local pre_tmp post_tmp
+    pre_tmp=$(mktemp)
+    post_tmp=$(mktemp)
+    pkg_list_installed | sort -u > "$pre_tmp"
+
+    # Install packages
+    local pkg_files=("$PKG_DIR"/*."$PKG_EXT")
+    if [ ! -f "${pkg_files[0]}" ]; then
+        echo "No package files found in $PKG_DIR"
+        rm -f "$pre_tmp" "$post_tmp"
+        return 1
+    fi
 
     if [ "$force" = "true" ]; then
-        rpm -Uvh --nodeps --force --nodigest --nosignature "$PKG_DIR"/*."$PKG_EXT" || true
+        pkg_install_files "${pkg_files[@]}"
     else
         local files_to_install=()
         local skipped=0
-        for pkg_file in "$PKG_DIR"/*."$PKG_EXT"; do
-            [ -f "$pkg_file" ] || continue
+        for pkg_file in "${pkg_files[@]}"; do
             local pkg_name file_ver installed_ver
-            pkg_name=$(rpm -qp --queryformat '%{NAME}' "$pkg_file" 2>/dev/null)
-            file_ver=$(rpm -qp --queryformat '%{VERSION}-%{RELEASE}' "$pkg_file" 2>/dev/null)
-            if installed_ver=$(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "$pkg_name" 2>/dev/null); then
+            pkg_name=$(pkg_query_name "$pkg_file")
+            file_ver=$(pkg_query_version "$pkg_file")
+            if installed_ver=$(pkg_query_installed_ver "$pkg_name"); then
                 if [ "$(printf '%s\n%s\n' "$installed_ver" "$file_ver" | sort -V | tail -1)" = "$installed_ver" ]; then
                     skipped=$((skipped + 1))
                     continue
@@ -79,93 +134,124 @@ install_packages() {
 
         if [ ${#files_to_install[@]} -gt 0 ]; then
             echo "Installing ${#files_to_install[@]} packages (skipped $skipped up-to-date)..."
-            rpm -Uvh --nodeps --force --nodigest --nosignature "${files_to_install[@]}" || true
+            pkg_install_files "${files_to_install[@]}"
         else
             echo "All packages are up-to-date (skipped $skipped)."
         fi
     fi
 
-    if [ -d "$SCRIPT_DIR/extra" ]; then
+    # Snapshot post-install state and compute diff (includes all dependencies)
+    pkg_list_installed | sort -u > "$post_tmp"
+    local new_tmp
+    new_tmp=$(mktemp)
+    comm -13 "$pre_tmp" "$post_tmp" > "$new_tmp"
+    if [ -f "$INSTALLED_FILE" ]; then
+        sort -u "$INSTALLED_FILE" "$new_tmp" > "${INSTALLED_FILE}.tmp"
+        mv "${INSTALLED_FILE}.tmp" "$INSTALLED_FILE"
+    else
+        cp "$new_tmp" "$INSTALLED_FILE"
+    fi
+    rm -f "$pre_tmp" "$post_tmp" "$new_tmp"
+
+    local tracked
+    tracked=$(wc -l < "$INSTALLED_FILE")
+    echo ""
+    echo "Tracked $tracked new packages for uninstall (including dependencies)."
+
+    # Install extra bundles
+    if [ -d "$SCRIPT_DIR/extra" ] && [ -f "$SCRIPT_DIR/extra/.extra-manifest" ]; then
         echo ""
         echo "Installing extra bundles..."
-        for t in "$SCRIPT_DIR"/extra/*.tar.gz; do
-            [ -f "$t" ] || continue
-            echo "  Extracting $(basename "$t") to /"
-            tar xzf "$t" -C /
-        done
+        while IFS= read -r rel_path; do
+            local tar_name parent_dir
+            tar_name="$(basename "$rel_path").tar.gz"
+            parent_dir="/$(dirname "$rel_path")"
+            mkdir -p "$parent_dir"
+            echo "  Extracting $tar_name to $parent_dir"
+            tar xzf "$SCRIPT_DIR/extra/$tar_name" -C "$parent_dir"
+        done < "$SCRIPT_DIR/extra/.extra-manifest"
         ln -sf /opt/cmake/bin/cmake /usr/bin/cmake
         ln -sf /opt/cmake/bin/ctest /usr/bin/ctest
         ln -sf /opt/cmake/bin/cpack /usr/bin/cpack
     fi
-}
 
-uninstall_packages() {
-    echo "============================================"
-    echo "  ${DISTRO_NAME} - Uninstalling"
-    echo "============================================"
-    echo ""
-    
-    # Read package list from packages.list (only top-level packages, not dependencies)
-    local packages_list_file="$(cd "$(dirname "$0")" && pwd)/packages.list"
-    if [ ! -f "$packages_list_file" ]; then
-        echo "No packages.list found, cannot determine which packages to remove."
-        return
+    # Post-install
+    local bashrc_line="source /opt/rh/devtoolset-9/enable"
+    if ! grep -qF "$bashrc_line" /etc/bashrc 2>/dev/null; then
+        echo "$bashrc_line" >> /etc/bashrc
     fi
-    
-    local names
-    names=$(cat "$packages_list_file" | sort -u)
-    if [ -z "$names" ]; then
-        echo "No packages found to uninstall."
-        return
-    fi
-    
-    local to_remove="$names"
-    if [ -f "$STATE_FILE" ]; then
-        # Only remove packages that were NOT pre-installed
-        to_remove=$(comm -23 <(echo "$names") <(sort "$STATE_FILE"))
-        rm -f "$STATE_FILE"
-    fi
-    
-    if [ -z "$to_remove" ]; then
-        echo "No new packages to remove (all were pre-installed)."
-        return
-    fi
-    
-    local count
-    count=$(echo "$to_remove" | wc -l)
-    echo "Removing ${count} RPM packages..."
-    echo ""
-    echo "$to_remove" | xargs yum remove -y 2>&1 | tail -5 || true
-    if [ -d "$SCRIPT_DIR/extra" ]; then
-        echo ""
-        echo "Removing extra bundles..."
-        for t in "$SCRIPT_DIR"/extra/*.tar.gz; do
-            [ -f "$t" ] || continue
-            local name
-            name=$(basename "$t" .tar.gz)
-            echo "  Removing /${name}/"
-            rm -rf "/${name}"
-        done
-        rm -f /usr/bin/cmake /usr/bin/ctest /usr/bin/cpack
-    fi
-    echo ""
-    
-    # Clean up orphaned dependencies
-    echo "Cleaning up orphaned dependencies..."
-    yum makecache -y >/dev/null 2>&1 || true
-    yum autoremove -y 2>&1 | tail -5 || true
-    echo ""
-    
-    echo "Uninstall complete."
-}
-
-post_install() {
-    echo "source /opt/rh/devtoolset-9/enable" >> /etc/bashrc
     echo ""
     echo "=== Installation Complete ==="
     bash -lc "gcc --version | head -1"
     echo "devtoolset-9 enabled in /etc/bashrc (new sessions auto-activate)"
     echo "For current session: source /opt/rh/devtoolset-9/enable"
+}
+
+uninstall_packages() {
+    echo "============================================"
+    echo "  ${DISTRO_NAME} - Uninstalling (soft)"
+    echo "============================================"
+    echo ""
+
+    local removed=0 skipped_missing=0 skipped_fail=0
+    local has_records=false
+
+    if [ -f "$INSTALLED_FILE" ]; then
+        has_records=true
+        local total
+        total=$(wc -l < "$INSTALLED_FILE")
+
+        if [ "$total" -gt 0 ]; then
+            echo "Processing $total tracked packages..."
+            echo ""
+
+            while IFS= read -r pkg_name; do
+                [ -z "$pkg_name" ] && continue
+
+                if ! pkg_query_installed_ver "$pkg_name" &>/dev/null; then
+                    echo "  SKIP (not installed): $pkg_name"
+                    skipped_missing=$((skipped_missing + 1))
+                    continue
+                fi
+
+                if pkg_remove_single "$pkg_name"; then
+                    echo "  REMOVED: $pkg_name"
+                    removed=$((removed + 1))
+                else
+                    echo "  SKIP (cannot remove): $pkg_name"
+                    skipped_fail=$((skipped_fail + 1))
+                fi
+            done < "$INSTALLED_FILE"
+        fi
+
+        rm -f "$INSTALLED_FILE"
+    fi
+
+    if [ "$has_records" = false ]; then
+        echo "No installation record found."
+    fi
+
+    echo ""
+    echo "Package summary: removed=$removed, not-installed=$skipped_missing, cannot-remove=$skipped_fail"
+
+    # Remove extra bundles
+    if [ -d "$SCRIPT_DIR/extra" ] && [ -f "$SCRIPT_DIR/extra/.extra-manifest" ]; then
+        echo ""
+        echo "Removing extra bundles..."
+        while IFS= read -r rel_path; do
+            echo "  Removing /${rel_path}/"
+            rm -rf "/${rel_path}"
+        done < "$SCRIPT_DIR/extra/.extra-manifest"
+        rm -f /usr/bin/cmake /usr/bin/ctest /usr/bin/cpack
+    fi
+
+    # Clean up orphaned dependencies
+    echo ""
+    echo "Cleaning up orphaned dependencies..."
+    pkg_autoremove
+
+    echo ""
+    echo "Uninstall complete."
 }
 
 # ---- Main ----
@@ -183,16 +269,9 @@ done
 ACTION="${ACTION:-install}"
 
 case "$ACTION" in
-    install)
-        install_packages "$FORCE"
-        post_install
-        ;;
+    install)    install_packages "$FORCE" ;;
     uninstall)  uninstall_packages ;;
     list)       list_packages ;;
     help)       usage ;;
-    *)
-        echo "Unknown action: $ACTION"
-        usage
-        exit 1
-        ;;
+    *)          echo "Unknown action: $ACTION"; usage; exit 1 ;;
 esac

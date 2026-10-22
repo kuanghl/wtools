@@ -193,20 +193,55 @@ uninstall_packages() {
     echo "============================================"
     echo ""
 
-    local removed=0 skipped_missing=0 skipped_fail=0
-    local has_records=false
-
-    if [ -f "$INSTALLED_FILE" ]; then
-        has_records=true
+    if [ ! -f "$INSTALLED_FILE" ]; then
+        echo "No installation record found."
+    else
         local total
         total=$(wc -l < "$INSTALLED_FILE")
-
-        if [ "$total" -gt 0 ]; then
+        if [ "$total" -eq 0 ]; then
+            echo "Installation record is empty."
+            rm -f "$INSTALLED_FILE"
+        else
             echo "Processing $total tracked packages..."
             echo ""
 
+            local removed=0 skipped_missing=0 skipped_fail=0
+            local remaining_tmp
+            remaining_tmp=$(mktemp)
+            local packages_list="${SCRIPT_DIR}/packages.list"
+
+            # Phase 1: top-level packages (remove first to release dependencies)
+            if [ -f "$packages_list" ]; then
+                echo "--- Phase 1: top-level packages ---"
+                while IFS= read -r pkg_name; do
+                    [ -z "$pkg_name" ] && continue
+                    grep -qFx "$pkg_name" "$INSTALLED_FILE" || continue
+
+                    if ! pkg_query_installed_ver "$pkg_name" &>/dev/null; then
+                        echo "  SKIP (not installed): $pkg_name"
+                        skipped_missing=$((skipped_missing + 1))
+                        continue
+                    fi
+
+                    if pkg_remove_single "$pkg_name"; then
+                        echo "  REMOVED: $pkg_name"
+                        removed=$((removed + 1))
+                    else
+                        echo "  SKIP (cannot remove): $pkg_name"
+                        skipped_fail=$((skipped_fail + 1))
+                        echo "$pkg_name" >> "$remaining_tmp"
+                    fi
+                done < "$packages_list"
+                echo ""
+            fi
+
+            # Phase 2: dependency packages (freed after phase 1)
+            echo "--- Phase 2: dependency packages ---"
             while IFS= read -r pkg_name; do
                 [ -z "$pkg_name" ] && continue
+                if [ -f "$packages_list" ] && grep -qFx "$pkg_name" "$packages_list"; then
+                    continue
+                fi
 
                 if ! pkg_query_installed_ver "$pkg_name" &>/dev/null; then
                     echo "  SKIP (not installed): $pkg_name"
@@ -220,19 +255,22 @@ uninstall_packages() {
                 else
                     echo "  SKIP (cannot remove): $pkg_name"
                     skipped_fail=$((skipped_fail + 1))
+                    echo "$pkg_name" >> "$remaining_tmp"
                 fi
             done < "$INSTALLED_FILE"
+
+            echo ""
+            echo "Summary: removed=$removed, not-installed=$skipped_missing, cannot-remove=$skipped_fail"
+
+            if [ -s "$remaining_tmp" ]; then
+                mv "$remaining_tmp" "$INSTALLED_FILE"
+                echo ""
+                echo "Retained $(wc -l < "$INSTALLED_FILE") package(s) that could not be removed (will retry on next uninstall)."
+            else
+                rm -f "$INSTALLED_FILE" "$remaining_tmp"
+            fi
         fi
-
-        rm -f "$INSTALLED_FILE"
     fi
-
-    if [ "$has_records" = false ]; then
-        echo "No installation record found."
-    fi
-
-    echo ""
-    echo "Package summary: removed=$removed, not-installed=$skipped_missing, cannot-remove=$skipped_fail"
 
     # Remove extra bundles
     if [ -d "$SCRIPT_DIR/extra" ] && [ -f "$SCRIPT_DIR/extra/.extra-manifest" ]; then

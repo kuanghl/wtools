@@ -5,6 +5,8 @@ set -euo pipefail
 
 DISTRO_NAME="Ubuntu 20.04 Driver Build Dependencies"
 INSTALLER_ID="ubuntu20.04-drv"
+EXPECTED_OS_ID="ubuntu"
+EXPECTED_OS_MAJOR="20"
 PKG_EXT="deb"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PKG_DIR="${SCRIPT_DIR}/packages"
@@ -47,6 +49,31 @@ pkg_remove_single() {
 pkg_autoremove() {
     apt-get update -qq >/dev/null 2>&1 || true
     apt-get autoremove -y 2>&1 | tail -5 || true
+}
+
+pkg_get_requires() {
+    dpkg-query -W -f '${Pre-Depends}\n${Depends}\n' "$1" 2>/dev/null \
+        | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]].*//' | grep -v '^$' | sort -u
+}
+
+pkg_check_dep() {
+    dpkg-query -W -f '${Status}\n' "$1" 2>/dev/null | grep -q "install ok installed"
+}
+
+check_os_compat() {
+    if [ ! -f /etc/os-release ]; then
+        echo "ERROR: Cannot detect OS version (/etc/os-release not found)."
+        exit 1
+    fi
+    local os_id os_version os_major
+    os_id=$(. /etc/os-release && echo "$ID")
+    os_version=$(. /etc/os-release && echo "$VERSION_ID")
+    os_major="${os_version%%.*}"
+    if [ "$os_id" != "$EXPECTED_OS_ID" ] || [ "$os_major" != "$EXPECTED_OS_MAJOR" ]; then
+        echo "ERROR: ${DISTRO_NAME} packages require ${EXPECTED_OS_ID} ${EXPECTED_OS_MAJOR}.xx."
+        echo "       Detected: ${os_id} ${os_version}"
+        exit 1
+    fi
 }
 
 # ---- Functions ----
@@ -96,6 +123,10 @@ install_packages() {
     echo "============================================"
     echo ""
 
+    local RUNNING_KVER
+    RUNNING_KVER=$(uname -r)
+    local kernel_skipped=0
+
     local pre_tmp post_tmp
     pre_tmp=$(mktemp)
     post_tmp=$(mktemp)
@@ -108,12 +139,35 @@ install_packages() {
         return 1
     fi
 
+    # Pre-filter: skip kernel packages that don't match running kernel
+    local filtered_files=()
+    for pkg_file in "${pkg_files[@]}"; do
+        local pn
+        pn=$(pkg_query_name "$pkg_file")
+        case "$pn" in
+            linux-headers-*)
+                local pv
+                pv=$(pkg_query_version "$pkg_file")
+                if [[ "$RUNNING_KVER" != ${pv}* ]]; then
+                    echo "WARNING: $pn version $pv does not match running kernel $RUNNING_KVER, skipping"
+                    kernel_skipped=$((kernel_skipped + 1))
+                    continue
+                fi
+                ;;
+        esac
+        filtered_files+=("$pkg_file")
+    done
+
     if [ "$force" = "true" ]; then
-        pkg_install_files "${pkg_files[@]}"
+        if [ ${#filtered_files[@]} -gt 0 ]; then
+            pkg_install_files "${filtered_files[@]}"
+        else
+            echo "No packages to install (all kernel packages skipped)."
+        fi
     else
         local files_to_install=()
         local skipped=0
-        for pkg_file in "${pkg_files[@]}"; do
+        for pkg_file in "${filtered_files[@]}"; do
             local pkg_name file_ver installed_ver
             pkg_name=$(pkg_query_name "$pkg_file")
             file_ver=$(pkg_query_version "$pkg_file")
@@ -163,6 +217,11 @@ install_packages() {
         echo "WARNING: linux-headers version may not match running kernel."
         echo "Available: $(ls /usr/src/ | grep linux-headers || echo 'none')"
     fi
+    if [ "$kernel_skipped" -gt 0 ]; then
+        echo ""
+        echo "WARNING: $kernel_skipped kernel package(s) skipped due to kernel version mismatch."
+        echo "Please install matching linux-headers for kernel $kver."
+    fi
 }
 
 uninstall_packages() {
@@ -195,68 +254,82 @@ uninstall_packages() {
     echo ""
 
     local removed=0 skipped_missing=0 skipped_fail=0
-    local remaining_tmp
-    remaining_tmp=$(mktemp)
-    local packages_list="${SCRIPT_DIR}/packages.list"
 
-    # Phase 1: top-level packages (remove first to release dependencies)
-    if [ -f "$packages_list" ]; then
-        echo "--- Phase 1: top-level packages ---"
+    # Build dependency graph and remove in topological order (leaves first).
+    # Recomputes the graph each pass so that failed removals don't block progress.
+    local current_list="$INSTALLED_FILE"
+    local pass=0
+    local pass_remaining_tmp=""
+
+    while [ -s "$current_list" ]; do
+        pass=$((pass + 1))
+        local pass_removed=0
+
+        local dep_of all_installed
+        dep_of=$(mktemp)
+        all_installed=$(mktemp)
+        sort -u "$current_list" > "$all_installed"
+
+        while IFS= read -r pkg; do
+            [ -z "$pkg" ] && continue
+            local req
+            for req in $(pkg_get_requires "$pkg"); do
+                if pkg_check_dep "$req" "$all_installed"; then
+                    echo "$pkg" >> "$dep_of"
+                    break
+                fi
+            done
+        done < "$current_list"
+        sort -u "$dep_of" > "${dep_of}.tmp" && mv "${dep_of}.tmp" "$dep_of"
+
+        echo "--- Pass ${pass} (topological) ---"
+        pass_remaining_tmp=$(mktemp)
+
         while IFS= read -r pkg_name; do
             [ -z "$pkg_name" ] && continue
-            grep -qFx "$pkg_name" "$INSTALLED_FILE" || continue
 
             if ! pkg_query_installed_ver "$pkg_name" &>/dev/null; then
-                echo "  SKIP (not installed): $pkg_name"
                 skipped_missing=$((skipped_missing + 1))
                 continue
             fi
 
-            if pkg_remove_single "$pkg_name"; then
-                echo "  REMOVED: $pkg_name"
-                removed=$((removed + 1))
+            if ! grep -qFx "$pkg_name" "$dep_of"; then
+                if pkg_remove_single "$pkg_name"; then
+                    echo "  REMOVED: $pkg_name"
+                    removed=$((removed + 1))
+                    pass_removed=$((pass_removed + 1))
+                else
+                    echo "$pkg_name" >> "$pass_remaining_tmp"
+                fi
             else
-                echo "  SKIP (cannot remove): $pkg_name"
-                skipped_fail=$((skipped_fail + 1))
-                echo "$pkg_name" >> "$remaining_tmp"
+                echo "$pkg_name" >> "$pass_remaining_tmp"
             fi
-        done < "$packages_list"
-        echo ""
+        done < "$current_list"
+
+        rm -f "$dep_of" "$all_installed"
+
+        if [ "$pass_removed" -eq 0 ]; then
+            break
+        fi
+
+        sort -u "$pass_remaining_tmp" > "${pass_remaining_tmp}.dedup"
+        mv "${pass_remaining_tmp}.dedup" "$pass_remaining_tmp"
+        current_list="$pass_remaining_tmp"
+    done
+
+    if [ -n "$pass_remaining_tmp" ] && [ -f "$pass_remaining_tmp" ] && [ -s "$pass_remaining_tmp" ]; then
+        skipped_fail=$(wc -l < "$pass_remaining_tmp")
     fi
-
-    # Phase 2: dependency packages (freed after phase 1)
-    echo "--- Phase 2: dependency packages ---"
-    while IFS= read -r pkg_name; do
-        [ -z "$pkg_name" ] && continue
-        if [ -f "$packages_list" ] && grep -qFx "$pkg_name" "$packages_list"; then
-            continue
-        fi
-
-        if ! pkg_query_installed_ver "$pkg_name" &>/dev/null; then
-            echo "  SKIP (not installed): $pkg_name"
-            skipped_missing=$((skipped_missing + 1))
-            continue
-        fi
-
-        if pkg_remove_single "$pkg_name"; then
-            echo "  REMOVED: $pkg_name"
-            removed=$((removed + 1))
-        else
-            echo "  SKIP (cannot remove): $pkg_name"
-            skipped_fail=$((skipped_fail + 1))
-            echo "$pkg_name" >> "$remaining_tmp"
-        fi
-    done < "$INSTALLED_FILE"
 
     echo ""
     echo "Summary: removed=$removed, not-installed=$skipped_missing, cannot-remove=$skipped_fail"
 
-    if [ -s "$remaining_tmp" ]; then
-        mv "$remaining_tmp" "$INSTALLED_FILE"
+    if [ -n "$pass_remaining_tmp" ] && [ -f "$pass_remaining_tmp" ] && [ -s "$pass_remaining_tmp" ]; then
+        mv "$pass_remaining_tmp" "$INSTALLED_FILE"
         echo ""
-        echo "Retained $(wc -l < "$INSTALLED_FILE") package(s) that could not be removed (will retry on next uninstall)."
+        echo "Retained $(wc -l < "$INSTALLED_FILE") package(s) that could not be removed."
     else
-        rm -f "$INSTALLED_FILE" "$remaining_tmp"
+        rm -f "$INSTALLED_FILE" "$pass_remaining_tmp"
     fi
 
     echo ""
@@ -282,7 +355,7 @@ done
 ACTION="${ACTION:-install}"
 
 case "$ACTION" in
-    install)    install_packages "$FORCE" ;;
+    install)    check_os_compat; install_packages "$FORCE" ;;
     uninstall)  uninstall_packages ;;
     list)       list_packages ;;
     help)       usage ;;

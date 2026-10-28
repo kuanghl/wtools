@@ -8,6 +8,8 @@ declare -A BASE_IMAGES=(
     [centos7.9]=semp-centos7
     [centos8.5]=semp-centos8.5
     [ubuntu20.04]=semp-ubuntu20.04
+    [ubuntu24.04]=semp-ubuntu24.04
+    [debian13]=semp-debian13
 )
 
 build_base() {
@@ -54,7 +56,7 @@ main() {
         esac
     done
 
-    local distro="${args[0]:?Usage: $0 [--force] <centos7.9|centos8.5|ubuntu20.04> [config-path]}"
+    local distro="${args[0]:?Usage: $0 [--force] <centos7.9|centos8.5|ubuntu20.04|ubuntu24.04|debian13> [config-path]}"
     local config="${args[1]:-config/${distro}.conf}"
 
     [ $force -eq 1 ] && echo "Force rebuild enabled."

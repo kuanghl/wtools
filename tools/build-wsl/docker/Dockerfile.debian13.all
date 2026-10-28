@@ -1,0 +1,30 @@
+FROM semp-debian13
+
+LABEL maintainer="Semptian"
+LABEL description="Debian 13 full build dependencies (GCC, CMake, kernel module build)"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install application build dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential gcc g++ make cmake git diffutils \
+    libreadline-dev libpcap-dev libaio-dev zlib1g-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install kernel module build dependencies (linux-headers-generic latest available)
+# If a specific kernel version is needed at runtime, install with:
+#   apt-get install -y linux-headers-$(uname -r)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    linux-headers-generic \
+    libelf-dev libssl-dev bc flex kmod && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Verify toolchain versions
+RUN gcc --version | head -1 && \
+    cmake --version | head -1
+
+CMD ["/bin/bash"]

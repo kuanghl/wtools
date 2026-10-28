@@ -25,6 +25,10 @@ jobs:
             base_image: semp-centos8.5
           - distro: ubuntu20.04
             base_image: semp-ubuntu20.04
+          # - distro: ubuntu24.04
+          #   base_image: semp-ubuntu24.04
+          # - distro: debian13
+          #   base_image: semp-debian13
 
     steps:
       - name: Checkout code

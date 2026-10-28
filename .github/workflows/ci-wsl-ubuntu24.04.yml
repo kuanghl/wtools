@@ -1,0 +1,49 @@
+name: CI Ubuntu 24.04
+
+on:
+  push:
+    # branches:
+    #   - master
+    tags:
+      - '*'
+  workflow_dispatch:
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+
+jobs:
+  build-wsl-ubuntu24_04:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install qemu-utils
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build
+        run: |
+          cd tools/build-wsl
+          chmod +x ./build-wsl-ubuntu24.04.sh
+          ./build-wsl-ubuntu24.04.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Ubuntu-24.04
+          path: tools/build-wsl/wsl/dist/Ubuntu24.04.zip
+
+      - name: Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          files: tools/build-wsl/wsl/dist/Ubuntu24.04.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,31 @@
+FROM ubuntu:24.04
+
+LABEL maintainer="Semptian"
+LABEL description="Ubuntu 24.04 with configurable mirrors"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Choose mirror: aliyun (default) or official.
+# Aliyun: https://mirrors.aliyun.com/ubuntu/
+# Official: http://archive.ubuntu.com/ubuntu/ and http://security.ubuntu.com/ubuntu/
+# Example: docker build --build-arg MIRROR=official -t ubuntu2404-official .
+ARG MIRROR=aliyun
+
+RUN set -eu; \
+    case "$MIRROR" in \
+      aliyun) ARCHIVE_HOST="mirrors.aliyun.com"; SECURITY_HOST="mirrors.aliyun.com" ;; \
+      official) ARCHIVE_HOST="archive.ubuntu.com"; SECURITY_HOST="security.ubuntu.com" ;; \
+      *) echo "Unsupported MIRROR: $MIRROR (use 'aliyun' or 'official')"; exit 1 ;; \
+    esac; \
+    SOURCES_FILE="/etc/apt/sources.list.d/ubuntu.sources"; \
+    if [ -f "$SOURCES_FILE" ]; then \
+      sed -i "s|http://archive.ubuntu.com/ubuntu|http://$ARCHIVE_HOST/ubuntu|g" "$SOURCES_FILE"; \
+      sed -i "s|http://security.ubuntu.com/ubuntu|http://$SECURITY_HOST/ubuntu|g" "$SOURCES_FILE"; \
+    else \
+      sed -i "s|archive.ubuntu.com|$ARCHIVE_HOST|g" /etc/apt/sources.list; \
+      sed -i "s|security.ubuntu.com|$SECURITY_HOST|g" /etc/apt/sources.list; \
+    fi; \
+    apt-get clean; \
+    apt-get update
+
+CMD ["/bin/bash"]

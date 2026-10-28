@@ -1,0 +1,25 @@
+FROM debian:13
+
+LABEL maintainer="Semptian"
+LABEL description="Debian 13 with configurable mirrors"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Choose mirror: aliyun (default) or official.
+# Aliyun: https://mirrors.aliyun.com/debian/
+# Official: http://deb.debian.org/debian/ and http://security.debian.org/
+# Example: docker build --build-arg MIRROR=official -t debian13-official .
+ARG MIRROR=aliyun
+
+RUN set -eu; \
+    case "$MIRROR" in \
+      aliyun) MAIN_HOST="mirrors.aliyun.com"; SECURITY_HOST="mirrors.aliyun.com" ;; \
+      official) MAIN_HOST="deb.debian.org"; SECURITY_HOST="security.debian.org" ;; \
+      *) echo "Unsupported MIRROR: $MIRROR (use 'aliyun' or 'official')"; exit 1 ;; \
+    esac; \
+    sed -i "s|deb.debian.org|$MAIN_HOST|g" /etc/apt/sources.list; \
+    sed -i "s|security.debian.org|$SECURITY_HOST|g" /etc/apt/sources.list; \
+    apt-get clean; \
+    apt-get update
+
+CMD ["/bin/bash"]

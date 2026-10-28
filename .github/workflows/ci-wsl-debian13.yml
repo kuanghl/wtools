@@ -1,0 +1,49 @@
+name: CI Debian 13
+
+on:
+  push:
+    # branches:
+    #   - master
+    tags:
+      - '*'
+  workflow_dispatch:
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+
+jobs:
+  build-wsl-debian13:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install qemu-utils
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build
+        run: |
+          cd tools/build-wsl
+          chmod +x ./build-wsl-debian13.sh
+          ./build-wsl-debian13.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Debian-13
+          path: tools/build-wsl/wsl/dist/Debian13.zip
+
+      - name: Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          files: tools/build-wsl/wsl/dist/Debian13.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

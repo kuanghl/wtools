@@ -3,3 +3,4 @@ _cache
 guidellm-env
 CentOS-WSL/
 tools/build-wsl/run/installers/*.list
+output/

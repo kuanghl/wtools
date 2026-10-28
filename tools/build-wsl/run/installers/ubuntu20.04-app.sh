@@ -12,6 +12,20 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PKG_DIR="${SCRIPT_DIR}/packages"
 INSTALLED_FILE="/var/lib/${INSTALLER_ID}-installed.list"
 
+# System-critical packages that should never be removed during uninstall
+# This list is populated at build time from config/*.conf
+PROTECTED_PACKAGES=()
+
+is_protected_package() {
+    local pkg="$1"
+    for protected in "${PROTECTED_PACKAGES[@]}"; do
+        if [ "$pkg" = "$protected" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # ---- Package manager functions (DEB/dpkg) ----
 
 pkg_list_installed() {
@@ -51,12 +65,7 @@ pkg_autoremove() {
     apt-get autoremove -y 2>&1 | tail -5 || true
 }
 
-pkg_get_requires() {
-    dpkg-query -W -f '${Pre-Depends}\n${Depends}\n' "$1" 2>/dev/null \
-        | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]].*//' | grep -v '^$' | sort -u
-}
-
-pkg_check_dep() {
+pkg_is_installed() {
     dpkg-query -W -f '${Status}\n' "$1" 2>/dev/null | grep -q "install ok installed"
 }
 
@@ -70,7 +79,7 @@ check_os_compat() {
     os_version=$(. /etc/os-release && echo "$VERSION_ID")
     os_major="${os_version%%.*}"
     if [ "$os_id" != "$EXPECTED_OS_ID" ] || [ "$os_major" != "$EXPECTED_OS_MAJOR" ]; then
-        echo "ERROR: ${DISTRO_NAME} packages require ${EXPECTED_OS_ID} ${EXPECTED_OS_MAJOR}.xx."
+        echo "ERROR: ${DISTRO_NAME} packages require ${EXPECTED_OS_ID} ${EXPECTED_OS_MAJOR}.x."
         echo "       Detected: ${os_id} ${os_version}"
         exit 1
     fi
@@ -125,7 +134,6 @@ install_packages() {
 
     local RUNNING_KVER
     RUNNING_KVER=$(uname -r)
-    local kernel_skipped=0
 
     local pre_tmp post_tmp
     pre_tmp=$(mktemp)
@@ -139,59 +147,77 @@ install_packages() {
         return 1
     fi
 
-    # Pre-filter: skip kernel packages that don't match running kernel
+    # Pre-filter: skip kernel header packages that don't match running kernel
+    # Note: linux-headers-generic is kept for userspace builds, only version-specific headers are filtered
+    # When --force is used, all packages are installed regardless of kernel version
     local filtered_files=()
     for pkg_file in "${pkg_files[@]}"; do
         local pn
         pn=$(pkg_query_name "$pkg_file")
         case "$pn" in
-            linux-headers-*)
-                local pv
-                pv=$(pkg_query_version "$pkg_file")
-                if [[ "$RUNNING_KVER" != ${pv}* ]]; then
-                    echo "WARNING: $pn version $pv does not match running kernel $RUNNING_KVER, skipping"
-                    kernel_skipped=$((kernel_skipped + 1))
-                    continue
+            linux-headers-[0-9]*)
+                if [ "$force" != "true" ]; then
+                    local pv
+                    pv=$(pkg_query_version "$pkg_file")
+                    if [[ "$RUNNING_KVER" != ${pv}* ]]; then
+                        continue
+                    fi
                 fi
                 ;;
         esac
         filtered_files+=("$pkg_file")
     done
 
-    if [ "$force" = "true" ]; then
-        if [ ${#filtered_files[@]} -gt 0 ]; then
-            pkg_install_files "${filtered_files[@]}"
-        else
-            echo "No packages to install (all kernel packages skipped)."
+    # Build installed-version cache (only actually installed packages)
+    declare -A _iv_cache
+    while IFS=' ' read -r _iv_status _iv_name _iv_ver; do
+        [ -z "$_iv_name" ] && continue
+        # Only cache packages with status "install ok installed"
+        if [ "$_iv_status" = "install" ]; then
+            _iv_cache["$_iv_name"]="$_iv_ver"
         fi
-    else
-        local files_to_install=()
-        local skipped=0
-        for pkg_file in "${filtered_files[@]}"; do
-            local pkg_name file_ver installed_ver
-            pkg_name=$(pkg_query_name "$pkg_file")
-            file_ver=$(pkg_query_version "$pkg_file")
-            if installed_ver=$(pkg_query_installed_ver "$pkg_name"); then
-                if [ "$(printf '%s\n%s\n' "$installed_ver" "$file_ver" | sort -V | tail -1)" = "$installed_ver" ]; then
-                    skipped=$((skipped + 1))
-                    continue
-                fi
-            fi
-            files_to_install+=("$pkg_file")
-        done
+    done < <(dpkg-query -W -f '${db:Status-Abb} ${Package} ${Version}\n' 2>/dev/null | grep '^ii')
 
-        if [ ${#files_to_install[@]} -gt 0 ]; then
-            echo "Installing ${#files_to_install[@]} packages (skipped $skipped up-to-date)..."
-            pkg_install_files "${files_to_install[@]}"
-        else
-            echo "All packages are up-to-date (skipped $skipped)."
+    local files_to_install=()
+    local skipped=0
+    for pkg_file in "${filtered_files[@]}"; do
+        local pkg_name file_ver installed_ver
+        pkg_name=$(pkg_query_name "$pkg_file")
+        file_ver=$(pkg_query_version "$pkg_file")
+        installed_ver="${_iv_cache[$pkg_name]:-}"
+        if [ -n "$installed_ver" ]; then
+            if [ "$(printf '%s\n%s\n' "$installed_ver" "$file_ver" | sort -V | tail -1)" = "$installed_ver" ]; then
+                skipped=$((skipped + 1))
+                continue
+            fi
         fi
+        files_to_install+=("$pkg_file")
+    done
+
+    if [ ${#files_to_install[@]} -gt 0 ]; then
+        echo "Installing ${#files_to_install[@]} packages (skipped $skipped up-to-date)..."
+        pkg_install_files "${files_to_install[@]}"
+    else
+        echo "All packages are up-to-date (skipped $skipped)."
     fi
 
+    # Snapshot post-install state and compute diff (includes all dependencies)
     pkg_list_installed | sort -u > "$post_tmp"
     local new_tmp
     new_tmp=$(mktemp)
-    comm -13 "$pre_tmp" "$post_tmp" > "$new_tmp"
+    # Compute new packages by NAME (not name-version) to avoid tracking
+    # upgrades of pre-existing packages (e.g. coreutils upgraded should not
+    # be removed on uninstall, as the system depended on the original version)
+    local pre_names_tmp
+    pre_names_tmp=$(mktemp)
+    awk '{print $1}' "$pre_tmp" | sort -u > "$pre_names_tmp"
+    local post_names_tmp
+    post_names_tmp=$(mktemp)
+    awk '{print $1}' "$post_tmp" | sort -u > "$post_names_tmp"
+    comm -13 "$pre_names_tmp" "$post_names_tmp" > "$new_tmp"
+    rm -f "$pre_names_tmp" "$post_names_tmp"
+
+    # Merge: existing tracked + new packages
     if [ -f "$INSTALLED_FILE" ]; then
         sort -u "$INSTALLED_FILE" "$new_tmp" > "${INSTALLED_FILE}.tmp"
         mv "${INSTALLED_FILE}.tmp" "$INSTALLED_FILE"
@@ -208,8 +234,8 @@ install_packages() {
     # Post-install
     echo ""
     echo "=== Installation Complete ==="
-    gcc --version | head -1
-    cmake --version | head -1
+    command -v gcc &>/dev/null && gcc --version | head -1
+    command -v cmake &>/dev/null && cmake --version | head -1
 }
 
 uninstall_packages() {
@@ -241,83 +267,70 @@ uninstall_packages() {
     echo "Processing $total tracked packages..."
     echo ""
 
-    local removed=0 skipped_missing=0 skipped_fail=0
-
-    # Build dependency graph and remove in topological order (leaves first).
-    # Recomputes the graph each pass so that failed removals don't block progress.
+    local removed=0 skipped_missing=0
     local current_list="$INSTALLED_FILE"
     local pass=0
-    local pass_remaining_tmp=""
 
     while [ -s "$current_list" ]; do
         pass=$((pass + 1))
         local pass_removed=0
-
-        local dep_of all_installed
-        dep_of=$(mktemp)
-        all_installed=$(mktemp)
-        sort -u "$current_list" > "$all_installed"
-
-        while IFS= read -r pkg; do
-            [ -z "$pkg" ] && continue
-            local req
-            for req in $(pkg_get_requires "$pkg"); do
-                if pkg_check_dep "$req" "$all_installed"; then
-                    echo "$pkg" >> "$dep_of"
-                    break
-                fi
-            done
-        done < "$current_list"
-        sort -u "$dep_of" > "${dep_of}.tmp" && mv "${dep_of}.tmp" "$dep_of"
-
-        echo "--- Pass ${pass} (topological) ---"
-        pass_remaining_tmp=$(mktemp)
+        local next_list_tmp
+        next_list_tmp=$(mktemp)
 
         while IFS= read -r pkg_name; do
             [ -z "$pkg_name" ] && continue
 
-            if ! pkg_query_installed_ver "$pkg_name" &>/dev/null; then
+            if ! pkg_is_installed "$pkg_name"; then
                 skipped_missing=$((skipped_missing + 1))
                 continue
             fi
 
-            if ! grep -qFx "$pkg_name" "$dep_of"; then
-                if pkg_remove_single "$pkg_name"; then
-                    echo "  REMOVED: $pkg_name"
-                    removed=$((removed + 1))
-                    pass_removed=$((pass_removed + 1))
-                else
-                    echo "$pkg_name" >> "$pass_remaining_tmp"
-                fi
+            if is_protected_package "$pkg_name"; then
+                echo "  PROTECTED: $pkg_name (system-critical, skipping)"
+                continue
+            fi
+
+            if pkg_remove_single "$pkg_name"; then
+                echo "  REMOVED: $pkg_name"
+                removed=$((removed + 1))
+                pass_removed=$((pass_removed + 1))
             else
-                echo "$pkg_name" >> "$pass_remaining_tmp"
+                echo "$pkg_name" >> "$next_list_tmp"
             fi
         done < "$current_list"
 
-        rm -f "$dep_of" "$all_installed"
+        # Clean up old current_list if it's a temp file
+        if [ "$current_list" != "$INSTALLED_FILE" ]; then
+            rm -f "$current_list"
+        fi
+
+        if [ -s "$next_list_tmp" ]; then
+            sort -u "$next_list_tmp" > "${next_list_tmp}.dedup" 2>/dev/null
+            mv "${next_list_tmp}.dedup" "$next_list_tmp" 2>/dev/null || true
+            current_list="$next_list_tmp"
+        else
+            rm -f "$next_list_tmp"
+            current_list=""
+            break
+        fi
 
         if [ "$pass_removed" -eq 0 ]; then
             break
         fi
-
-        sort -u "$pass_remaining_tmp" > "${pass_remaining_tmp}.dedup"
-        mv "${pass_remaining_tmp}.dedup" "$pass_remaining_tmp"
-        current_list="$pass_remaining_tmp"
     done
 
-    if [ -n "$pass_remaining_tmp" ] && [ -f "$pass_remaining_tmp" ] && [ -s "$pass_remaining_tmp" ]; then
-        skipped_fail=$(wc -l < "$pass_remaining_tmp")
-    fi
-
-    echo ""
-    echo "Summary: removed=$removed, not-installed=$skipped_missing, cannot-remove=$skipped_fail"
-
-    if [ -n "$pass_remaining_tmp" ] && [ -f "$pass_remaining_tmp" ] && [ -s "$pass_remaining_tmp" ]; then
-        mv "$pass_remaining_tmp" "$INSTALLED_FILE"
+    # Update INSTALLED_FILE with remaining packages
+    if [ -n "$current_list" ] && [ -s "$current_list" ]; then
+        mv "$current_list" "$INSTALLED_FILE"
+        local cannot_remove
+        cannot_remove=$(wc -l < "$INSTALLED_FILE")
         echo ""
-        echo "Retained $(wc -l < "$INSTALLED_FILE") package(s) that could not be removed."
+        echo "Summary: removed=$removed, not-installed=$skipped_missing, cannot-remove=$cannot_remove"
+        echo "Retained $cannot_remove package(s) that could not be removed."
     else
-        rm -f "$INSTALLED_FILE" "$pass_remaining_tmp"
+        rm -f "$INSTALLED_FILE"
+        echo ""
+        echo "Summary: removed=$removed, not-installed=$skipped_missing, cannot-remove=0"
     fi
 
     echo ""

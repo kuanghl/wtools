@@ -74,6 +74,12 @@ cd run/
 
 # 脚本构建
 # 构建单个发行版（自动构建基础镜像 → .all 镜像 → 打包 .run）
+# Dockfile 更新时
+./docker-build.sh centos7.9 --force
+./docker-build.sh centos8.5 --force
+./docker-build.sh ubuntu20.04 --force
+
+# Dockfile 无更新时，使用缓存
 ./docker-build.sh centos7.9
 ./docker-build.sh centos8.5
 ./docker-build.sh ubuntu20.04

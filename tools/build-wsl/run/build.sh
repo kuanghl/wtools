@@ -19,6 +19,26 @@ build_run() {
     cp "$installer" "$staging/install.sh"
     cp "$pkg_dir"/* "$staging/packages/" 2>/dev/null || true
 
+    # Inject PROTECTED_PACKAGES from config into installer
+    if [ ${#PROTECTED_PACKAGES[@]} -gt 0 ]; then
+        local temp_file="${staging}/install.sh.tmp"
+
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^PROTECTED_PACKAGES=\(\) ]]; then
+                echo "PROTECTED_PACKAGES=(" >> "$temp_file"
+                for pkg in "${PROTECTED_PACKAGES[@]}"; do
+                    echo "    $pkg" >> "$temp_file"
+                done
+                echo ")" >> "$temp_file"
+            else
+                echo "$line" >> "$temp_file"
+            fi
+        done < "$staging/install.sh"
+
+        mv "$temp_file" "$staging/install.sh"
+        chmod +x "$staging/install.sh"
+    fi
+
     if [ ${#extra_dirs[@]} -gt 0 ]; then
         mkdir -p "$staging/extra"
         for dir in "${extra_dirs[@]}"; do
@@ -48,7 +68,7 @@ fi
 echo "Extracting ${display_name}..."
 SKIP=\$(awk '/^__PAYLOAD_BELOW__\$/{print NR; exit}' "\$0")
 TMPDIR=\$(mktemp -d /tmp/${output_name}.XXXXXX)
-trap '/usr/bin/rm -rf "\$TMPDIR"' EXIT
+trap 'command -v rm >/dev/null 2>&1 && rm -rf "\$TMPDIR" || true' EXIT
 tail -n +\$((SKIP + 1)) "\$0" | tar xz -C "\$TMPDIR"
 
 bash "\$TMPDIR/install.sh" "\$@"

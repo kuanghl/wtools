@@ -13,6 +13,10 @@ declare -A BASE_IMAGES=(
 build_base() {
     local distro="$1"
     local image="${BASE_IMAGES[$distro]}"
+    if [ $force -eq 0 ] && docker image inspect "$image" >/dev/null 2>&1; then
+        echo "=== Base image '${image}' already exists, skipping build ==="
+        return
+    fi
     echo "=== Building base image: ${image} ==="
     docker build -t "$image" -f "${DOCKER_DIR}/Dockerfile.${distro}" "${DOCKER_DIR}"
 }
@@ -20,6 +24,10 @@ build_base() {
 build_all() {
     local distro="$1"
     local image="${BASE_IMAGES[$distro]}.all"
+    if [ $force -eq 0 ] && docker image inspect "$image" >/dev/null 2>&1; then
+        echo "=== All-deps image '${image}' already exists, skipping build ==="
+        return
+    fi
     echo "=== Building all-deps image: ${image} ==="
     docker build -t "$image" -f "${DOCKER_DIR}/Dockerfile.${distro}.all" "${DOCKER_DIR}"
 }
@@ -37,8 +45,19 @@ run_build() {
 }
 
 main() {
-    local distro="${1:?Usage: $0 <centos7.9|centos8.5|ubuntu20.04> [config-path]}"
-    local config="${2:-config/${distro}.conf}"
+    local force=0
+    local args=()
+    for arg in "$@"; do
+        case "$arg" in
+            --force) force=1 ;;
+            *) args+=("$arg") ;;
+        esac
+    done
+
+    local distro="${args[0]:?Usage: $0 [--force] <centos7.9|centos8.5|ubuntu20.04> [config-path]}"
+    local config="${args[1]:-config/${distro}.conf}"
+
+    [ $force -eq 1 ] && echo "Force rebuild enabled."
 
     build_base "$distro"
     build_all "$distro"

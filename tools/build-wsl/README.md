@@ -11,7 +11,10 @@
 
 - [build centos7.9 wsl rootfs](./build-wsl-centos7.9.sh)
 - [build centos8.5 wsl rootfs](./build-wsl-centos8.5.sh)
-- [build centos20.04 wsl rootfs](./build-wsl-ubuntu20.04.sh)
+- [build ubuntu20.04 wsl rootfs](./build-wsl-ubuntu20.04.sh)
+- [build ubuntu24.04 wsl rootfs](./build-wsl-ubuntu24.04.sh)
+- [build debian13 wsl rootfs](./build-wsl-debian13.sh)
+- [build omarchy4.0.6 wsl rootfs](./build-wsl-omarchy4.0.6.sh)
 
 ```sh
 # 下载.zip包

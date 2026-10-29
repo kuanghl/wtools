@@ -1,0 +1,49 @@
+name: CI Omarchy 4.0.6
+
+on:
+  push:
+    # branches:
+    #   - master
+    tags:
+      - '*'
+  workflow_dispatch:
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+
+jobs:
+  build-wsl-omarchy4_0_6:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install qemu-utils xorriso zstd btrfs-progs
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build
+        run: |
+          cd tools/build-wsl
+          chmod +x ./build-wsl-omarchy4.0.6.sh
+          ./build-wsl-omarchy4.0.6.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Omarchy-4.0.6
+          path: tools/build-wsl/wsl/dist/Omarchy4.0.6.zip
+
+      - name: Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          files: tools/build-wsl/wsl/dist/Omarchy4.0.6.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -34,6 +34,38 @@ wsl --terminate CentOS7     # 停止wsl
 | CentOS 8.5 | `centos8.5-app-deps.run` | `centos8.5-drv-deps.run` |
 | Ubuntu 20.04 | `ubuntu20.04-app-deps.run` | `ubuntu20.04-drv-deps.run` |
 
+测试系统镜像:
+
+- [CentOS 7.9](https://mirrors.aliyun.com/centos-vault/7.9.2009/isos/x86_64/CentOS-7-x86_64-Minimal-2009.iso): CentOS 7.9 将用于测试 run 包
+- [CentOS 8.5](https://mirrors.aliyun.com/centos-vault/8.5.2111/isos/x86_64/CentOS-8.5.2111-x86_64-dvd1.iso): CentOS 8.5 将用于测试 run 包
+- [Ubuntu 20.04](https://mirrors.aliyun.com/oldubuntu-releases/releases/20.04/ubuntu-20.04-live-server-amd64.iso): Ubuntu 20.04 将用于测试 run 包
+
+```sh
+# 1. 安装 Quickemu (以Ubuntu为例)
+sudo add-apt-repository ppa:flexiondotorg/quickemu
+sudo apt update
+sudo apt install quickemu
+
+# 2. 自动下载Ubuntu 20.04镜像并生成配置
+quickget ubuntu 20.04
+
+# 3. 启动虚拟机
+# 更改 ubuntu-20.04.conf 中的iso路径
+quickemu --vm ubuntu-20.04.conf  
+
+# 为 CentOS 7.9 创建配置
+quickget --create-config /path/to/CentOS-7-x86_64-Minimal-2009.iso
+
+# 为 CentOS 8.5 创建配置
+quickget --create-config /path/to/CentOS-8.5.2111-x86_64-dvd1.iso
+
+# 启动 CentOS 7.9
+quickemu --vm CentOS-7-x86_64-Minimal-2009.conf
+
+# 启动 CentOS 8.5
+quickemu --vm CentOS-8.5.2111-x86_64-dvd1.conf
+```
+
 ### 离线包安装和卸载机制
 
 #### .run 包内部结构

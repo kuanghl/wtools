@@ -90,7 +90,8 @@ create_user() {
     # 配置 sudo 权限
     if [ "$is_sudo" = "true" ]; then
         usermod -aG sudo "$user"
-        echo ">>> 用户 $user 已成功加入 sudo 组。"
+        usermod -aG docker "$user"
+        echo ">>> 用户 $user 已成功加入 sudo / docker 组。"
     fi
 
     echo ">>> 用户 $user 创建完成！"

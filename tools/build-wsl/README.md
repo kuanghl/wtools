@@ -38,32 +38,92 @@ wsl --terminate CentOS7     # 停止wsl
 
 - [CentOS 7.9](https://mirrors.aliyun.com/centos-vault/7.9.2009/isos/x86_64/CentOS-7-x86_64-Minimal-2009.iso): CentOS 7.9 将用于测试 run 包
 - [CentOS 8.5](https://mirrors.aliyun.com/centos-vault/8.5.2111/isos/x86_64/CentOS-8.5.2111-x86_64-dvd1.iso): CentOS 8.5 将用于测试 run 包
-- [Ubuntu 20.04](https://mirrors.aliyun.com/oldubuntu-releases/releases/20.04/ubuntu-20.04-live-server-amd64.iso): Ubuntu 20.04 将用于测试 run 包
+- [Ubuntu 20.04.6](https://mirrors.aliyun.com/oldubuntu-releases/releases/20.04.6/ubuntu-20.04.6-live-server-amd64.iso): Ubuntu 20.04 将用于测试 run 包
 
 ```sh
-# 1. 安装 Quickemu (以Ubuntu为例)
-sudo add-apt-repository ppa:flexiondotorg/quickemu
+# 安装依赖
 sudo apt update
-sudo apt install quickemu
+sudo apt install -y qemu-system-x86 qemu-utils libudev-dev libvirt-daemon-system libvirt-clients bridge-utils
+sudo systemctl enable --now libvirtd
+sudo usermod -aG kvm $USER
+sudo add-apt-repository ppa:canonical-server/server-backports
+sudo apt update
+sudo apt upgrade libvirt-daemon-system libvirt-clients
+libvirtd --version
+sudo systemctl restart libvirtd
+sudo add-apt-repository --remove ppa:canonical-server/server-backports
+sudo apt install --reinstall update-notifier-common
+sudo /usr/lib/update-notifier/update-motd-updates-available --force
+sudo bash -x /etc/update-motd.d/98-fsck-at-reboot
+sudo apt update
+sudo apt install --only-upgrade coreutils
 
-# 2. 自动下载Ubuntu 20.04镜像并生成配置
-quickget ubuntu 20.04
+# 下载系统镜像
+sudo apt install aria2
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/centos-vault/7.9.2009/isos/x86_64/CentOS-7-x86_64-Minimal-2009.iso"
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/centos-vault/8.5.2111/isos/x86_64/CentOS-8.5.2111-x86_64-dvd1.iso"
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/ubuntu-releases/20.04.6/ubuntu-20.04.6-live-server-amd64.iso"
 
-# 3. 启动虚拟机
-# 更改 ubuntu-20.04.conf 中的iso路径
-quickemu --vm ubuntu-20.04.conf  
+# 安装webkvm: https://github.com/Slaker19/webkvm.git
+curl -fsSL https://raw.githubusercontent.com/Slaker19/webkvm/main/scripts/install-webkvm.sh | sudo WEBKVM_PORT=18090 bash
+# or clone newest
+sudo add-apt-repository ppa:longsleep/golang-backports -y
+sudo apt update
+sudo apt install -y golang nodejs npm
+sudo apt install -y pkg-config libvirt-dev libvirt-daemon-system libvirt-clients
+go env -w GOPROXY=https://mirrors.aliyun.com/goproxy,direct
+go env -w GOPROXY=https://goproxy.cn,direct
+git clone https://github.com/Slaker19/webkvm
+cd webkvm/backend
+go clean -modcache
+go mod tidy
+cd ../../webkvm
+make build -j$(nproc)
+make install
 
-# 为 CentOS 7.9 创建配置
-quickget --create-config /path/to/CentOS-7-x86_64-Minimal-2009.iso
+# webkvm 安装和使用虚拟机
+# "server.port": 18090, 端口号设置
+# "server.bind_addr": "0.0.0.0", 监听所有网卡
+sudo nano /opt/webkvm/config.json   # Ctrl + O 保存 --> Enter 确认文件名 --> Ctrl + X退出 
+sudo ufw allow 18090/tcp
+sudo systemctl status webkvm
+sudo systemctl stop webkvm
+sudo systemctl restart webkvm
+sudo journalctl -u webkvm -f
+sudo cat /opt/webkvm/admin-password.initial     # 查看密码
+http://192.168.4.171:18090                      # 浏览器上打开webkvm，重设密码为 semptian1Q2w3e
+http://192.168.4.171:18090/#/vms                # 虚拟机
 
-# 为 CentOS 8.5 创建配置
-quickget --create-config /path/to/CentOS-8.5.2111-x86_64-dvd1.iso
+# 创建虚拟机
+# Storage --> Storage Pools --> Create Pool -->  /opt/webkvm/pools/webkvm-isos/     放置系统*.iso镜像
+# Storage --> Storage Pools --> Create Pool -->  /opt/webkvm/pools/webkvm-disks/    放置系统*.qcow2镜像
+# Virtual Machines --> VM --> Snapshots --> Create Snapshots 创建快照
+Storage --> Storage Pools --> ISO Images --> Upload (Target pool: webkvm-isos) --> 上传*.iso系统镜像
+Virtual Machines --> Create VM --> 系统配置...
 
-# 启动 CentOS 7.9
-quickemu --vm CentOS-7-x86_64-Minimal-2009.conf
-
-# 启动 CentOS 8.5
-quickemu --vm CentOS-8.5.2111-x86_64-dvd1.conf
+# 配置ssh
+# centos7.9
+nmcli connection show
+nmcli connection modify eth0 ipv4.method auto connection.autoconnect yes
+nmcli connection up eth0
+ip a # 查看虚拟机ip
+sudo systemctl status sshd
+sudo firewall-cmd --permanent --add-service=ssh
+sudo firewall-cmd --reload
+# centos8.5
+# user: root / password: root
+# user: kuanghl / password: 123456
+nmcli connection show
+nmcli connection modify enp1s0 ipv4.method auto connection.autoconnect yes
+nmcli connection up enp1s0
+ip a # 查看虚拟机ip
+sudo systemctl status sshd
+sudo firewall-cmd --zone=libvirt --add-service=ssh --permanent
+sudo firewall-cmd --reload
+# ubuntu20.04, ubuntu-20.04.6-live-server-amd64.iso 会报错 crash 不用管 --> Close report --> Shutdown
+# user: kuanghl / password: 123456
+# user: root / password: root
+sudo passwd root     # 输入 kuanghl 密码 123456 --> 输入 root 密码 root
 ```
 
 ### 离线包安装和卸载机制

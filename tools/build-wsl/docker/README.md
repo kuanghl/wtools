@@ -43,6 +43,10 @@ docker run --rm semp-centos7 yum list installed
 docker run --rm semp-centos8.5 yum list installed
 docker run --rm semp-ubuntu20.04 apt-cache policy
 注意：CentOS 8 已 EOL，如需后续安装依赖可能需要切换到 vault 镜像源
+
+# ubuntu 基础依赖
+sudo apt-get install -y build-essential gcc g++ make cmake git diffutils libreadline-dev libpcap-dev libaio-dev zlib1g-dev vim
+sudo apt-get install -y linux-headers-generic libelf-dev libssl-dev bc flex kmod
 ```
 
 2. docker 测试编译

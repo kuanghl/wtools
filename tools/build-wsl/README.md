@@ -43,9 +43,10 @@ wsl --terminate CentOS7     # 停止wsl
 ```sh
 # 安装依赖
 sudo apt update
-sudo apt install -y qemu-system-x86 qemu-utils libudev-dev libvirt-daemon-system libvirt-clients bridge-utils
+sudo apt install -y qemu-system-x86 qemu-utils libudev-dev libvirt-daemon-system libvirt-clients bridge-utils cpu-checker
 sudo systemctl enable --now libvirtd
 sudo usermod -aG kvm $USER
+kvm-ok
 sudo add-apt-repository ppa:canonical-server/server-backports
 sudo apt update
 sudo apt upgrade libvirt-daemon-system libvirt-clients
@@ -73,12 +74,12 @@ sudo apt install -y golang nodejs npm
 sudo apt install -y pkg-config libvirt-dev libvirt-daemon-system libvirt-clients
 go env -w GOPROXY=https://mirrors.aliyun.com/goproxy,direct
 go env -w GOPROXY=https://goproxy.cn,direct
-git clone https://github.com/Slaker19/webkvm
+git clone https://github.com/kuanghl/webkvm.git
 cd webkvm/backend
 go clean -modcache
 go mod tidy
 cd ../../webkvm
-make build -j$(nproc)
+make -j$(nproc) build 
 make install
 
 # webkvm 安装和使用虚拟机
@@ -124,6 +125,13 @@ sudo firewall-cmd --reload
 # user: kuanghl / password: 123456
 # user: root / password: root
 sudo passwd root     # 输入 kuanghl 密码 123456 --> 输入 root 密码 root
+
+# 虚拟机备份，虚拟机先关机
+cp /opt/webkvm/pools/webkvm-disks/*..qcow2  ~/kvm
+cd ~/kvm
+sudo qemu-img info centos7.9.qcow2 | grep -i backing    
+# 如果是链接镜像(存在backing)，则需要进行以下转换成独立镜像，才可以移动到其他主机上使用
+sudo qemu-img convert -f qcow2 -O qcow2 source.qcow2 standalone.qcow2
 ```
 
 ### 离线包安装和卸载机制

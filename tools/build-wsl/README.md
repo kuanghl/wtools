@@ -15,6 +15,9 @@
 - [build ubuntu24.04 wsl rootfs](./build-wsl-ubuntu24.04.sh)
 - [build debian13 wsl rootfs](./build-wsl-debian13.sh)
 - [build omarchy4.0.6 wsl rootfs](./build-wsl-omarchy4.0.6.sh)
+- [build anolis7.9 wsl rootfs](./build-wsl-anolis7.9.sh)
+
+> anolis7.9 基于官方 GA 的 RHCK qcow2 虚拟机镜像制作，WSL 实例名为 `Anolis7`（`Anolis7.exe`），yum 已换为阿里云 `anolis/7.9` 源。
 
 ```sh
 # 下载.zip包
@@ -64,6 +67,7 @@ sudo apt install aria2
 aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/centos-vault/7.9.2009/isos/x86_64/CentOS-7-x86_64-Minimal-2009.iso"
 aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/centos-vault/8.5.2111/isos/x86_64/CentOS-8.5.2111-x86_64-dvd1.iso"
 aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/ubuntu-releases/20.04.6/ubuntu-20.04.6-live-server-amd64.iso"
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.openanolis.cn/anolis/7.9/isos/GA/x86_64/AnolisOS-7.9-Minimal-x86_64-dvd.iso"
 
 # 安装webkvm: https://github.com/Slaker19/webkvm.git
 curl -fsSL https://raw.githubusercontent.com/Slaker19/webkvm/main/scripts/install-webkvm.sh | sudo WEBKVM_PORT=18090 bash

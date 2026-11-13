@@ -1,0 +1,50 @@
+name: CI Anolis 7.9
+
+on:
+  push:
+    # branches:
+    #   - master
+    tags:
+      - '*'
+  workflow_dispatch:
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+
+jobs:
+  build-wsl-anolis7_9:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install qemu-utils lvm2
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build
+        run: |
+          cd tools/build-wsl
+          chmod +x ./build-wsl-anolis7.9.sh
+          ./build-wsl-anolis7.9.sh
+          mv wsl/dist/Anolis7.zip wsl/dist/Anolis-7.9-RHCK.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Anolis-7.9-RHCK
+          path: tools/build-wsl/wsl/dist/Anolis-7.9-RHCK.zip
+
+      - name: Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          files: tools/build-wsl/wsl/dist/Anolis-7.9-RHCK.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,4 +1,4 @@
-name: CI Omarchy 4.0.6
+name: CI Omarchy 4.5.0
 
 on:
   push:
@@ -28,21 +28,21 @@ jobs:
       - name: Build
         run: |
           cd tools/build-wsl
-          chmod +x ./build-wsl-omarchy4.0.6.sh
-          ./build-wsl-omarchy4.0.6.sh
+          chmod +x ./build-wsl-omarchy4.5.0.sh
+          ./build-wsl-omarchy4.5.0.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: Omarchy-4.0.6
-          path: tools/build-wsl/wsl/dist/Omarchy4.0.6.zip
+          name: Omarchy-4.5.0
+          path: tools/build-wsl/wsl/dist/Omarchy4.5.0.zip
 
       - name: Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
-          files: tools/build-wsl/wsl/dist/Omarchy4.0.6.zip
+          files: tools/build-wsl/wsl/dist/Omarchy4.5.0.zip
           draft: false
           prerelease: false
         env:

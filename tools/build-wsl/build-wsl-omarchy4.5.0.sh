@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Environment variables for the Omarchy ISO
-OS_VER="4.0.6"
+OS_VER="4.5.0"
 ISO_FN="omarchy-${OS_VER}.iso"
 ISO_URL="https://iso.omarchy.org/${ISO_FN}"
 

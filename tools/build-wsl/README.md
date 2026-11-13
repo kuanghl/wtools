@@ -72,7 +72,8 @@ sudo add-apt-repository ppa:longsleep/golang-backports -y
 sudo apt update
 sudo apt install -y golang nodejs npm
 sudo apt install -y pkg-config libvirt-dev libvirt-daemon-system libvirt-clients
-go env -w GOPROXY=https://mirrors.aliyun.com/goproxy,direct
+go version
+# go env -w GOPROXY=https://mirrors.aliyun.com/goproxy,direct
 go env -w GOPROXY=https://goproxy.cn,direct
 git clone https://github.com/kuanghl/webkvm.git
 cd webkvm/backend
@@ -81,6 +82,7 @@ go mod tidy
 cd ../../webkvm
 make -j$(nproc) build 
 make install
+make install-systemd
 
 # webkvm 安装和使用虚拟机
 # "server.port": 18090, 端口号设置

@@ -36,6 +36,12 @@ bash msd.sh Eco-Tech/Qwen3.8-27B-w8a8-mxfp8 -x $(nproc) --local-dir /models/Qwen
 # Qwen3.8-Flash-Next
 bash msd.sh Qwen/Qwen3.8-Flash-Next -x $(nproc) --local-dir /models/Qwen3.8-Flash-Next
 
+# Qwen3.8-Flash-Next-w4a8
+bash msd.sh Eco-Tech/Qwen3.8-Flash-Next-w4a8 -x $(nproc) --local-dir /models/Qwen3.8-Flash-Next-w4a8
+
+# Qwen3.8-Flash-Next-w8a8-mtp
+bash msd.sh Eco-Tech/Qwen3.8-Flash-Next-w8a8-mtp -x $(nproc) --local-dir /models/Qwen3.8-Flash-Next-w8a8-mtp
+
 # Qwen3.5-35B-A3B-w8a8-mtp
 bash msd.sh Eco-Tech/Qwen3.5-35B-A3B-w8a8-mtp -x $(nproc) --local-dir /models/Qwen3.5-35B-A3B-w8a8-mtp
 

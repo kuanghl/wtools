@@ -19,26 +19,6 @@ build_run() {
     cp "$installer" "$staging/install.sh"
     cp "$pkg_dir"/* "$staging/packages/" 2>/dev/null || true
 
-    # Inject PROTECTED_PACKAGES from config into installer
-    if [ ${#PROTECTED_PACKAGES[@]} -gt 0 ]; then
-        local temp_file="${staging}/install.sh.tmp"
-
-        while IFS= read -r line; do
-            if [[ "$line" =~ ^PROTECTED_PACKAGES=\(\) ]]; then
-                echo "PROTECTED_PACKAGES=(" >> "$temp_file"
-                for pkg in "${PROTECTED_PACKAGES[@]}"; do
-                    echo "    $pkg" >> "$temp_file"
-                done
-                echo ")" >> "$temp_file"
-            else
-                echo "$line" >> "$temp_file"
-            fi
-        done < "$staging/install.sh"
-
-        mv "$temp_file" "$staging/install.sh"
-        chmod +x "$staging/install.sh"
-    fi
-
     if [ ${#extra_dirs[@]} -gt 0 ]; then
         mkdir -p "$staging/extra"
         for dir in "${extra_dirs[@]}"; do

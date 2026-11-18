@@ -13,12 +13,13 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install kernel module build dependencies (linux-headers-generic latest available)
+# Install kernel module build dependencies (linux-headers-amd64 latest available;
+# Debian has no linux-headers-generic)
 # If a specific kernel version is needed at runtime, install with:
 #   apt-get install -y linux-headers-$(uname -r)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    linux-headers-generic \
+    linux-headers-amd64 \
     libelf-dev libssl-dev bc flex kmod && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*

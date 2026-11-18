@@ -23,22 +23,11 @@ build_base() {
     docker build -t "$image" -f "${DOCKER_DIR}/Dockerfile.${distro}" "${DOCKER_DIR}"
 }
 
-build_all() {
-    local distro="$1"
-    local image="${BASE_IMAGES[$distro]}.all"
-    if [ $force -eq 0 ] && docker image inspect "$image" >/dev/null 2>&1; then
-        echo "=== All-deps image '${image}' already exists, skipping build ==="
-        return
-    fi
-    echo "=== Building all-deps image: ${image} ==="
-    docker build -t "$image" -f "${DOCKER_DIR}/Dockerfile.${distro}.all" "${DOCKER_DIR}"
-}
-
 run_build() {
     local distro="$1"
     local config="$2"
-    local image="${BASE_IMAGES[$distro]}.all"
-    echo "=== Running build in: ${image} ==="
+    local image="${BASE_IMAGES[$distro]}"
+    echo "=== Running build in: ${image} (minimal base for accurate dep resolution) ==="
     docker run --rm \
         -v "${SCRIPT_DIR}:${SCRIPT_DIR}" \
         -w "${SCRIPT_DIR}" \
@@ -62,7 +51,6 @@ main() {
     [ $force -eq 1 ] && echo "Force rebuild enabled."
 
     build_base "$distro"
-    build_all "$distro"
     run_build "$distro" "$config"
 }
 

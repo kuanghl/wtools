@@ -1,0 +1,4 @@
+FROM local-ubuntu:20.04
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /workspace
+CMD ["/bin/bash"]

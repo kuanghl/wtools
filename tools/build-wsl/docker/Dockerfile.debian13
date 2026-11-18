@@ -17,8 +17,13 @@ RUN set -eu; \
       official) MAIN_HOST="deb.debian.org"; SECURITY_HOST="security.debian.org" ;; \
       *) echo "Unsupported MIRROR: $MIRROR (use 'aliyun' or 'official')"; exit 1 ;; \
     esac; \
-    sed -i "s|deb.debian.org|$MAIN_HOST|g" /etc/apt/sources.list; \
-    sed -i "s|security.debian.org|$SECURITY_HOST|g" /etc/apt/sources.list; \
+    # Debian 13 images ship deb822 sources only: /etc/apt/sources.list does not
+    # exist, so sed on it would fail and abort the build under `set -eu`.
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
+      [ -f "$f" ] || continue; \
+      sed -i -e "s|deb.debian.org|$MAIN_HOST|g" \
+             -e "s|security.debian.org|$SECURITY_HOST|g" "$f"; \
+    done; \
     apt-get clean; \
     apt-get update
 

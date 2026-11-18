@@ -1,41 +1,42 @@
 #!/bin/bash
 
 # ==========================================
-# Ubuntu 20.04 自动新建用户脚本 (函数化版)
+# Ubuntu 20.04 Automatic User Creation Script (Functional Version)
 # ==========================================
 
-# 全局变量
+# Global Variables
 USERNAME=""
 PASSWORD=""
 ADD_SUDO="false"
 
 # ------------------------------------------
-# 函数：打印帮助信息
+# Function: usage (Print help information)
+# Notes:
 # sudo usermod -aG docker $USER
-# 方法一: (ubuntu_24.04.4.tar images 1) / (ngis-aig.tar images 2)
+# Method 1: (ubuntu_24.04.4.tar images 1) / (ngis-aig.tar images 2)
 # docker import ngis-aig.tar ubuntu_24.04.4:ngis_aig
 # docker run -it --name ngis_aig_build -v ~/:/workspace ubuntu_24.04.4:ngis_aig /bin/bash
 # docker exec -it ngis_aig_build /bin/bash
-# 方法二:
+# Method 2:
 # docker load -i ngis-aig.tar
 # docker run -it --name ngis_aig_build -v ~/:/workspace ubuntu_24.04.4:ngis_aig bash
 # docker exec -it ngis_aig_build /bin/bash
-# 镜像二:
+# Image 2:
 # docker load -i ubuntu_24.04.4.tar
 # docker run -it --name ngis_aig_build -v ~/:/workspace ubuntu_24.04.4:ngis_aig bash
 # docker exec -it ngis_aig_build /bin/bash
 # ------------------------------------------
 usage() {
     cat << EOF
-用法: $0 [选项]
+Usage: $0 [options]
 
-选项:
-  -u, --username <名字>    指定要创建的用户名 (必填)
-  -p, --password <密码>    指定用户密码 (可选，不填则交互式输入)
-  -s, --sudo               将用户加入 sudo 组 (可选)
-  -h, --help               显示此帮助信息
+Options:
+  -u, --username <name>    Specify the username to create (required)
+  -p, --password <pass>    Specify the user password (optional, prompts interactively if omitted)
+  -s, --sudo               Add the user to the sudo group (optional)
+  -h, --help               Display this help message
 
-示例:
+Example:
   $0 -u newuser -p MyPass123 -s
   $0 --username newuser --sudo
 EOF
@@ -43,65 +44,75 @@ EOF
 }
 
 # ------------------------------------------
-# 函数：检查是否为 root 权限
+# Function: check_root
+# Description: Check if the script is run with root privileges
 # ------------------------------------------
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        echo "错误：请使用 sudo 或 root 权限运行此脚本。" >&2
+        echo "Error: Please run this script with sudo or as root." >&2
         exit 1
     fi
 }
 
 # ------------------------------------------
-# 函数：检查用户是否已存在
+# Function: user_exists
+# Description: Check if the user already exists
 # ------------------------------------------
 user_exists() {
     local user=$1
     if id "$user" &>/dev/null; then
-        echo "错误：用户 $user 已存在！" >&2
+        echo "Error: User $user already exists!" >&2
         exit 1
     fi
 }
 
 # ------------------------------------------
-# 函数：创建用户并设置密码/权限
+# Function: create_user
+# Description: Create user and set password/permissions
 # ------------------------------------------
 create_user() {
     local user=$1
     local pass=$2
     local is_sudo=$3
 
-    echo ">>> 正在创建用户: $user ..."
-    # 创建用户并跳过交互提示
+    echo ">>> Creating user: $user ..."
+    # Create user and skip interactive prompts
     if ! adduser --gecos "" --disabled-password "$user"; then
-        echo "错误：创建用户 $user 失败！" >&2
+        echo "Error: Failed to create user $user!" >&2
         exit 1
     fi
 
-    # 设置密码
+    # Set password
     if [ -n "$pass" ]; then
         echo "$user:$pass" | chpasswd
-        echo ">>> 密码已设置。"
+        echo ">>> Password has been set."
     else
-        echo ">>> 请为 $user 设置密码："
+        echo ">>> Please set a password for $user:"
         passwd "$user"
     fi
 
-    # 配置 sudo 权限
+    # Configure sudo privileges
     if [ "$is_sudo" = "true" ]; then
         usermod -aG sudo "$user"
-        usermod -aG docker "$user"
-        echo ">>> 用户 $user 已成功加入 sudo / docker 组。"
+        
+        # Optional: Add to docker group if it exists
+        if getent group docker > /dev/null; then
+            usermod -aG docker "$user"
+            echo ">>> User $user successfully added to sudo / docker groups."
+        else
+            echo ">>> User $user successfully added to sudo group (docker group not found)."
+        fi
     fi
 
-    echo ">>> 用户 $user 创建完成！"
+    echo ">>> User $user created successfully!"
 }
 
 # ------------------------------------------
-# 函数：解析命令行参数
+# Function: parse_args
+# Description: Parse command-line arguments
 # ------------------------------------------
 parse_args() {
-    # 使用 getopt 解析长短参数
+    # Use getopt to parse long and short arguments
     local TEMP
     TEMP=$(getopt -o u:p:sh --long username:,password:,sudo,help -n "$0" -- "$@")
     
@@ -133,22 +144,22 @@ parse_args() {
                 break
                 ;;
             * )
-                echo "内部错误：参数解析失败"
+                echo "Internal Error: Argument parsing failed."
                 exit 1
                 ;;
         esac
     done
 
-    # 校验必填参数
+    # Validate required arguments
     if [ -z "$USERNAME" ]; then
-        echo "错误：必须提供用户名 (-u/--username)。" >&2
-        echo "使用 -h 查看帮助信息。"
+        echo "Error: Username is required (-u/--username)." >&2
+        echo "Use -h for help information."
         exit 1
     fi
 }
 
 # ==========================================
-# 主函数 / 程序入口
+# Main Function / Program Entry
 # ==========================================
 main() {
     parse_args "$@"
@@ -157,5 +168,5 @@ main() {
     create_user "$USERNAME" "$PASSWORD" "$ADD_SUDO"
 }
 
-# 执行主函数
+# Execute the main function
 main "$@"

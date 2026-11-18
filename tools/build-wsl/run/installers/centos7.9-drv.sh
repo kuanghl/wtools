@@ -8,23 +8,10 @@ INSTALLER_ID="centos7.9-drv"
 EXPECTED_OS_ID="centos"
 EXPECTED_OS_MAJOR="7"
 PKG_EXT="rpm"
+MGR_TOOL="yum"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PKG_DIR="${SCRIPT_DIR}/packages"
 INSTALLED_FILE="/var/lib/${INSTALLER_ID}-installed.list"
-
-# System-critical packages that should never be removed during uninstall
-# This list is populated at build time from config/*.conf
-PROTECTED_PACKAGES=()
-
-is_protected_package() {
-    local pkg="$1"
-    for protected in "${PROTECTED_PACKAGES[@]}"; do
-        if [ "$pkg" = "$protected" ]; then
-            return 0
-        fi
-    done
-    return 1
-}
 
 # ---- Package manager functions (RPM/Yum) ----
 
@@ -56,23 +43,75 @@ pkg_remove_single() {
     rpm -e "$1" 2>/dev/null
 }
 
+pkg_is_installed() {
+    rpm -q "$1" &>/dev/null
+}
+
+pkg_remove_batch() {
+    # One dependency-resolved erase transaction over the whole stalled group.
+    # Breaks mutual / version-locked cycles (cmake<->cmake-data, git<->perl-Git,
+    # glibc-devel<->libxcrypt-devel) that a bare `rpm -e` cannot. Runs offline
+    # (--cacheonly) so yum/dnf never touch repo metadata over the network.
+    yum remove -y --cacheonly --quiet "$@" >/dev/null 2>&1 || true
+}
+
 pkg_autoremove() {
-    yum makecache -y >/dev/null 2>&1 || true
-    yum autoremove -y 2>&1 | tail -5 || true
+    # Offline: never reach the network. `yum makecache` and dnf/yum's default
+    # autoremove both refresh repo metadata, which fails on an air-gapped box
+    # (CentOS 8 dnf: "Failed to download metadata for repo ..."). Operate on the
+    # local rpmdb/cache only; best-effort and non-fatal, since the tracked-list
+    # removal above already covers every package installed here.
+    yum autoremove -y --cacheonly --quiet >/dev/null 2>&1 || true
 }
 
 check_os_compat() {
-    if [ ! -f /etc/os-release ]; then
-        echo "ERROR: Cannot detect OS version (/etc/os-release not found)."
+    # Detect the running distribution. /etc/os-release is the universal source
+    # (present on CentOS/RHEL and Ubuntu/Debian); the remaining files are
+    # fallbacks so the gate still works on a stripped image that lacks it.
+    local os_id="" os_version=""
+    if [ -f /etc/os-release ]; then
+        os_id=$(. /etc/os-release 2>/dev/null && echo "${ID:-}" || true)
+        os_version=$(. /etc/os-release 2>/dev/null && echo "${VERSION_ID:-}" || true)
+    fi
+    if { [ -z "$os_id" ] || [ -z "$os_version" ]; } && [ -f /etc/lsb-release ]; then
+        os_id=$(. /etc/lsb-release 2>/dev/null && echo "${DISTRIB_ID:-}" | tr '[:upper:]' '[:lower:]' || true)
+        os_version=$(. /etc/lsb-release 2>/dev/null && echo "${DISTRIB_RELEASE:-}" || true)
+    fi
+    if { [ -z "$os_id" ] || [ -z "$os_version" ]; } && [ -f /etc/redhat-release ]; then
+        # e.g. "CentOS Linux release 7.9.2009 (Core)"
+        local rl; rl=$(cat /etc/redhat-release 2>/dev/null || true)
+        case "$rl" in
+            *[Cc][Ee][Nn][Tt][Oo][Ss]*) os_id="centos" ;;
+            *[Rr][Ee][Dd]*[Hh][Aa][Tt]*) os_id="rhel" ;;
+        esac
+        if [ -n "$rl" ]; then
+            os_version=${rl#*release }
+            os_version=${os_version%% *}
+        fi
+    fi
+    if { [ -z "$os_id" ] || [ -z "$os_version" ]; } && [ -f /etc/issue ]; then
+        local il; il=$(head -1 /etc/issue 2>/dev/null || true)
+        case "$il" in
+            *[Uu][Bb][Uu][Nn][Tt][Uu]*) os_id="ubuntu"; os_version=${il#*buntu }; os_version=${os_version%% *} ;;
+            *[Cc][Ee][Nn][Tt][Oo][Ss]*) os_id="centos"; os_version=${il#*CentOS }; os_version=${os_version%% *} ;;
+        esac
+    fi
+
+    if [ -z "$os_id" ] || [ -z "$os_version" ]; then
+        echo "ERROR: Cannot detect the operating system."
+        echo "       (none of /etc/os-release, /etc/lsb-release, /etc/redhat-release, /etc/issue are usable)"
+        echo "       Refusing to run: nothing will be installed or removed."
         exit 1
     fi
-    local os_id os_version os_major
-    os_id=$(. /etc/os-release && echo "$ID")
-    os_version=$(. /etc/os-release && echo "$VERSION_ID")
-    os_major="${os_version%%.*}"
+
+    # Enforce the OS *series*: centos7.9 -> CentOS 7.x only, centos8.5 -> CentOS
+    # 8.x only, ubuntu20.04 -> Ubuntu 20.x only. A major-version match is exactly
+    # that series, so 7.9.2009 passes centos/7 and 20.04 passes ubuntu/20.
+    local os_major="${os_version%%.*}"
     if [ "$os_id" != "$EXPECTED_OS_ID" ] || [ "$os_major" != "$EXPECTED_OS_MAJOR" ]; then
-        echo "ERROR: ${DISTRO_NAME} packages require ${EXPECTED_OS_ID} ${EXPECTED_OS_MAJOR}.x."
+        echo "ERROR: ${INSTALLER_ID} only runs on ${EXPECTED_OS_ID} ${EXPECTED_OS_MAJOR}.x"
         echo "       Detected: ${os_id} ${os_version}"
+        echo "       Refusing to run: nothing will be installed or removed."
         exit 1
     fi
 }
@@ -179,6 +218,7 @@ install_packages() {
         installed_ver="${_iv_cache[$pkg_name]:-}"
         if [ -n "$installed_ver" ]; then
             if [ "$(printf '%s\n%s\n' "$installed_ver" "$file_ver" | sort -V | tail -1)" = "$installed_ver" ]; then
+                echo "  SKIP: ${pkg_name} ${file_ver} (system already has ${installed_ver})"
                 skipped=$((skipped + 1))
                 continue
             fi
@@ -289,11 +329,6 @@ uninstall_packages() {
                 continue
             fi
 
-            if is_protected_package "$pkg_name"; then
-                echo "  PROTECTED: $pkg_name (system-critical, skipping)"
-                continue
-            fi
-
             if pkg_remove_single "$pkg_name"; then
                 echo "  REMOVED: $pkg_name"
                 removed=$((removed + 1))
@@ -322,6 +357,52 @@ uninstall_packages() {
             break
         fi
     done
+
+    # Second-chance (transactional): the per-package loop above cannot break
+    # mutual / version-locked dependency cycles among the bundle's OWN packages
+    # (cmake <-> cmake-data, git <-> perl-Git, glibc-devel <-> libxcrypt-devel):
+    # a bare `rpm -e`/`dpkg --remove` aborts whenever the requirer is itself still
+    # installed, so those stall here. Run ONE package-manager transaction
+    # (yum/apt-get remove) over the stalled remainder -- it resolves erase order
+    # for the whole group in a single pass -- then reconcile the tracked-list so
+    # it reflects what is genuinely still installed: entries the transaction
+    # removed are counted and dropped from the list, and only packages still
+    # anchored by something we did NOT install remain as cannot-remove.
+    if [ -n "$current_list" ] && [ -s "$current_list" ]; then
+        local mgr_pkgs=()
+        while IFS= read -r pkg_name; do
+            [ -z "$pkg_name" ] && continue
+            mgr_pkgs+=("$pkg_name")
+        done < "$current_list"
+
+        if [ ${#mgr_pkgs[@]} -gt 0 ]; then
+            echo ""
+            echo "Resolving ${#mgr_pkgs[@]} dependency-locked package(s) via ${MGR_TOOL} remove..."
+            pkg_remove_batch "${mgr_pkgs[@]}"
+
+            local reconciled_tmp
+            reconciled_tmp=$(mktemp)
+            while IFS= read -r pkg_name; do
+                [ -z "$pkg_name" ] && continue
+                if pkg_is_installed "$pkg_name"; then
+                    echo "$pkg_name" >> "$reconciled_tmp"
+                else
+                    echo "  REMOVED: $pkg_name (via ${MGR_TOOL})"
+                    removed=$((removed + 1))
+                fi
+            done < "$current_list"
+
+            if [ -s "$reconciled_tmp" ]; then
+                sort -u "$reconciled_tmp" -o "$reconciled_tmp"
+                rm -f "$current_list"
+                mv "$reconciled_tmp" "$current_list"
+            else
+                rm -f "$reconciled_tmp"
+                rm -f "$current_list"
+                current_list=""
+            fi
+        fi
+    fi
 
     # Update INSTALLED_FILE with remaining packages
     if [ -n "$current_list" ] && [ -s "$current_list" ]; then
@@ -361,8 +442,8 @@ ACTION="${ACTION:-install}"
 
 case "$ACTION" in
     install)    check_os_compat; install_packages "$FORCE" ;;
-    uninstall)  uninstall_packages ;;
-    list)       list_packages ;;
+    uninstall)  check_os_compat; uninstall_packages ;;
+    list)       check_os_compat; list_packages ;;
     help)       usage ;;
     *)          echo "Unknown action: $ACTION"; usage; exit 1 ;;
 esac

@@ -6,6 +6,8 @@
 - [build centos7.9 docker images](./docker/Dockerfile.centos7.9)
 - [build centos8.5 docker images](./docker/Dockerfile.centos8.5)
 - [build ubuntu20.04 docker images](./docker/Dockerfile.ubuntu20.04)
+- [build ubuntu24.04 docker images](./docker/Dockerfile.ubuntu24.04)
+- [build debian13 docker images](./docker/Dockerfile.debian13)
 
 ## wsl 构建和使用
 
@@ -36,12 +38,21 @@ wsl --terminate CentOS7     # 停止wsl
 | CentOS 7.9 | `centos7.9-app-deps.run` | `centos7.9-drv-deps.run` |
 | CentOS 8.5 | `centos8.5-app-deps.run` | `centos8.5-drv-deps.run` |
 | Ubuntu 20.04 | `ubuntu20.04-app-deps.run` | `ubuntu20.04-drv-deps.run` |
+| Ubuntu 24.04 | `ubuntu24.04-app-deps.run` | `ubuntu24.04-drv-deps.run` |
+| Debian 13 | `debian13-app-deps.run` | `debian13-drv-deps.run` |
+
+> CentOS 7.9 / CentOS 8.5 / Ubuntu 20.04 的 drv 包已把 kernel headers 按目标机 `uname -r` 固定版本。
+> Ubuntu 24.04 / Debian 13 目标机内核尚未确定，`config/*.conf` 中先用 meta 包（`linux-headers-generic` / `linux-headers-amd64`，跟随仓库最新）；确定 `uname -r` 后应改为具体包名并重新打包，否则安装时会因版本不匹配被跳过。
+> Debian 13 的版本化 headers 硬依赖同版本 `linux-image-*`，其 drv 包会连带整个内核镜像（约 108MB）。
 
 测试系统镜像:
 
 - [CentOS 7.9](https://mirrors.aliyun.com/centos-vault/7.9.2009/isos/x86_64/CentOS-7-x86_64-Minimal-2009.iso): CentOS 7.9 将用于测试 run 包
 - [CentOS 8.5](https://mirrors.aliyun.com/centos-vault/8.5.2111/isos/x86_64/CentOS-8.5.2111-x86_64-dvd1.iso): CentOS 8.5 将用于测试 run 包
 - [Ubuntu 20.04.6](https://mirrors.aliyun.com/oldubuntu-releases/releases/20.04.6/ubuntu-20.04.6-live-server-amd64.iso): Ubuntu 20.04 将用于测试 run 包
+- Ubuntu 24.04 / Debian 13: run 包已在 `semp-ubuntu24.04` / `semp-debian13` 镜像内完成 install/uninstall 往返验证（包集合与基线一致），实体机 / 虚拟机实测待补
+
+### 虚拟机Linux搭建及配网等动作
 
 ```sh
 # 安装依赖
@@ -107,9 +118,11 @@ http://192.168.4.171:18090/#/vms                # 虚拟机
 # Virtual Machines --> VM --> Snapshots --> Create Snapshots 创建快照
 Storage --> Storage Pools --> ISO Images --> Upload (Target pool: webkvm-isos) --> 上传*.iso系统镜像
 Virtual Machines --> Create VM --> 系统配置...
+Virtual Machines --> Machines --> Disks --> DISKS --> CDROM -->  Change ISO --> ejiect-no ISO / Remove   # 安装完毕之后, 执行该操作或者以下
+# Virtual Machines --> Machines --> Overview --> Boot --> Hard Disk                                      # 安装完毕之后，从CDROM切换成Hard Disk
 
-# 配置ssh
-# centos7.9
+# 配置ssh / 配网
+# Centos7.9 / AnolisOS-7
 nmcli connection show
 nmcli connection modify eth0 ipv4.method auto connection.autoconnect yes
 nmcli connection up eth0
@@ -117,7 +130,7 @@ ip a # 查看虚拟机ip
 sudo systemctl status sshd
 sudo firewall-cmd --permanent --add-service=ssh
 sudo firewall-cmd --reload
-# centos8.5
+# Centos8.5
 # user: root / password: root
 # user: kuanghl / password: 123456
 nmcli connection show
@@ -127,10 +140,11 @@ ip a # 查看虚拟机ip
 sudo systemctl status sshd
 sudo firewall-cmd --zone=libvirt --add-service=ssh --permanent
 sudo firewall-cmd --reload
-# ubuntu20.04, ubuntu-20.04.6-live-server-amd64.iso 会报错 crash 不用管 --> Close report --> Shutdown
+# Ubuntu20.04, ubuntu-20.04.6-live-server-amd64.iso 会报错 crash 不用管 --> Close report --> Shutdown
 # user: kuanghl / password: 123456
 # user: root / password: root
 sudo passwd root     # 输入 kuanghl 密码 123456 --> 输入 root 密码 root
+# ip a               # 查看 ip 信息，远程主机通过 ssh 远程链接到虚拟机上使用
 
 # 虚拟机备份，虚拟机先关机
 cp /opt/webkvm/pools/webkvm-disks/*..qcow2  ~/kvm
@@ -138,6 +152,70 @@ cd ~/kvm
 sudo qemu-img info centos7.9.qcow2 | grep -i backing    
 # 如果是链接镜像(存在backing)，则需要进行以下转换成独立镜像，才可以移动到其他主机上使用
 sudo qemu-img convert -f qcow2 -O qcow2 source.qcow2 standalone.qcow2
+```
+
+### 挂载文件目录
+
+1. 宿主机端配置（Linux 宿主机）
+
+```sh
+# ssh 连通后，进行以下配置
+# 1. 安装 NFS 服务端
+sudo yum install -y nfs-utils  # 或 sudo apt install nfs-kernel-server
+
+# 2. 创建共享目录
+sudo mkdir -p /srv/nfs_share
+sudo chmod 755 /srv/nfs_share
+
+# 3. 编辑 /etc/exports，添加规则（将 192.168.1.0/24 替换为你的虚拟机网段）
+echo "/srv/nfs_share 192.168.1.0/24(rw,sync,no_subtree_check)" | sudo tee -a /etc/exports
+
+# 4. 生效配置并启动服务
+sudo exportfs -ra
+sudo systemctl enable --now nfs-server
+sudo systemctl status nfs-server
+```
+
+2. 虚拟机端（Anolis OS 7.9）挂载
+
+```sh
+# 1. 安装 NFS 客户端
+sudo yum install -y nfs-utils  # 或 sudo apt install nfs-kernel-server
+
+# 2. 创建挂载点
+sudo mkdir -p /mnt/nfs_share
+
+# 3. 挂载（将 <宿主机IP> 替换为实际 IP）
+sudo mount -t nfs <宿主机IP>:/srv/nfs_share /mnt/nfs_share
+sudo mount 192.168.4.171:/home1/khl mnt
+
+# 4. 验证
+df -h 
+ls /mnt/nfs_share
+```
+
+### ssh 连接加速
+
+```sh
+# 虚拟机修改
+vi /etc/ssh/sshd_config
+
+# 1. 关闭 GSSAPI 认证
+GSSAPIAuthentication no
+
+# 2. 显式关闭 DNS 反向解析（最关键的一步）
+UseDNS no
+
+# 3. （可选）关闭 Kerberos 认证
+KerberosAuthentication no
+
+# 4. 重启服务
+systemctl restart sshd
+
+# 5. ssh root 登录及密码验证开启 -- for ubuntu20.04
+PermitRootLogin yes
+PasswordAuthentication yes
+systemctl restart sshd
 ```
 
 ### 离线包安装和卸载机制
@@ -182,28 +260,33 @@ extra/*.tar.gz      # 可选，需从二进制解压的组件（如 CMake）
 cd run/
 
 # 脚本构建
-# 构建单个发行版（自动构建基础镜像 → .all 镜像 → 打包 .run）
+# 构建单个发行版（自动构建纯净基础镜像 → 打包 .run，依赖在纯净镜像内解析以贴近目标机）
 # Dockfile 更新时
 ./docker-build.sh centos7.9 --force
 ./docker-build.sh centos8.5 --force
 ./docker-build.sh ubuntu20.04 --force
+./docker-build.sh ubuntu24.04 --force
+./docker-build.sh debian13 --force
 
 # Dockfile 无更新时，使用缓存
 ./docker-build.sh centos7.9
 ./docker-build.sh centos8.5
 ./docker-build.sh ubuntu20.04
+./docker-build.sh ubuntu24.04
+./docker-build.sh debian13
 
 # 并行构建全部发行版
 ./docker-build.sh centos7.9 &
 ./docker-build.sh centos8.5 &
 ./docker-build.sh ubuntu20.04 &
+./docker-build.sh ubuntu24.04 &
+./docker-build.sh debian13 &
 wait
 
 # 单步构建，以 centos7.9 为例
 docker build -t semp-centos7 -f ../docker/Dockerfile.centos7.9 ../docker/
-docker build -t semp-centos7.all -f ../docker/Dockerfile.centos7.9.all ../docker/
 docker run --rm -v "$(pwd):$(pwd)" -w "$(pwd)" \
-    semp-centos7.all bash ./build.sh config/centos7.9.conf
+    semp-centos7 bash ./build.sh config/centos7.9.conf
 ```
 
 ### 离线包使用

@@ -1,12 +1,12 @@
 name: CI Omarchy 4.5.0
 
-on:
-  push:
-    # branches:
-    #   - master
-    tags:
-      - '*'
-  workflow_dispatch:
+# on:
+#   push:
+#     # branches:
+#     #   - master
+#     tags:
+#       - '*'
+#   workflow_dispatch:
 
 env:
   RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}

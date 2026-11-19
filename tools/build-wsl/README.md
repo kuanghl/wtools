@@ -88,7 +88,8 @@ aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/rock
 aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/fedora/releases/45/Server/x86_64/iso/Fedora-Server-dvd-x86_64-45-1.4.iso"
 aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/freebsd/releases/ISO-IMAGES/15.1/FreeBSD-15.1-RELEASE-amd64-disc1.iso"
 aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/almalinux/10.2/isos/x86_64_v2/AlmaLinux-10.2-x86_64_v2-minimal.iso"
-
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/nixos-images/nixos-26.05/latest-nixos-minimal-x86_64-linux.iso"
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/alpine/v3.24/releases/x86_64/alpine-extended-3.24.4-x86_64.iso"
 
 # 安装webkvm: https://github.com/Slaker19/webkvm.git
 curl -fsSL https://raw.githubusercontent.com/Slaker19/webkvm/main/scripts/install-webkvm.sh | sudo WEBKVM_PORT=18090 bash

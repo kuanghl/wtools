@@ -1,47 +1,57 @@
 #!/bin/bash
 ###############################################################################
-# env_check.sh - 通用软件环境检查脚本（任意 Linux 主机/容器内直接运行）
+# env_check.sh - Generic software environment checker
+#                (runs directly on any Linux host / container)
 #
-# 功能:
-#   逐项检查当前环境的软件环境（解释器/pip 包/系统包/证书/昇腾 CANN/NPU 等），
-#   输出统一的 [PASS|FAIL|INFO] 报告；有 FAIL 时退出码为 1，可作环境门禁。
+# Purpose:
+#   Check the current software environment item by item (interpreters / pip
+#   packages / system packages / CA certificates / Ascend CANN / NPU, etc.)
+#   and emit a unified [PASS|FAIL|INFO] report. Exit code is 1 when any FAIL
+#   occurs, so the script can act as an environment gate.
 #
-# 使用:
-#   1) 检查当前环境（先进容器/主机再执行）:
+# Usage:
+#   1) Check the current environment (enter the container/host first):
 #        bash env_check.sh
-#   2) 一次性检查指定镜像（不留容器，脚本走 stdin）:
+#   2) One-shot check of a given image (no container left behind, script via
+#      stdin):
 #        docker run --rm -i <image> bash -s < env_check.sh
-#        例: docker run --rm -i quay.io/ascend/vllm-ascend:v0.23.0-openeuler bash -s < env_check.sh
-#   3) 只跑指定项（--step 约定与同目录模型脚本集一致）:
+#        e.g.: docker run --rm -i quay.io/ascend/vllm-ascend:v0.23.0-openeuler bash -s < env_check.sh
+#   3) Run only selected items (--step convention matches the sibling model
+#      script set):
 #        bash env_check.sh --step python,lmcache
 #
-# 扩展检查项（只改两处）:
-#   1) CHECK_LIST 里加一个 id（位置 = 输出顺序）
-#   2) 实现对应 check_<id>() 函数（内部用 report 以同名 id 上报）
+# Extending (touch only two places):
+#   1) Add an id to CHECK_LIST (position = output order).
+#   2) Implement the matching check_<id>() function (report under the same id).
 #
-# 说明: 部分镜像（如昇腾）的 CANN 环境只由 entrypoint/profile 设置，
-#       非 login shell 下运行时脚本会自动 source 常见 env 脚本兜底。
+# Notes:
+#   On some images (e.g. Ascend) the CANN environment is only set by the
+#   entrypoint/profile; when running as a non-login shell the script sources
+#   common env scripts as a fallback.
 ###############################################################################
 
 set -o pipefail
 export LC_ALL=C
 
-# ===== 检查项清单（可自由增删，位置即输出顺序） =====
+# ===== Check list (add/remove freely; position = output order) =====
 CHECK_LIST=(python pip ca_certs vllm vllm_ascend modelslim lmcache guidellm cann npu)
 
-# ===== 结果统计 =====
+# ===== Result counters =====
 PASS=0
 FAIL=0
 INFO=0
 
-# ===== 输出颜色（非 TTY 或设置 NO_COLOR 时自动关闭，保证管道/日志干净） =====
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-    C_PASS=$'\033[32m' C_FAIL=$'\033[31m' C_INFO=$'\033[33m' C_RESET=$'\033[0m'
-else
-    C_PASS="" C_FAIL="" C_INFO="" C_RESET=""
-fi
+# ===== Output colors (auto-disabled on non-TTY or when NO_COLOR is set,
+#       so pipes / logs stay clean) =====
+setup_colors() {
+    if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+        C_PASS=$'\033[32m'; C_FAIL=$'\033[31m'; C_INFO=$'\033[33m'; C_RESET=$'\033[0m'
+    else
+        C_PASS=""; C_FAIL=""; C_INFO=""; C_RESET=""
+    fi
+}
 
-# report <项> <PASS|FAIL|INFO> <详情...>
+# report <item> <PASS|FAIL|INFO> <details...>
 report() {
     local item="$1" status="$2" color
     shift 2
@@ -53,9 +63,9 @@ report() {
     printf '[%s%-4s%s] %-14s %s\n' "$color" "$status" "$C_RESET" "$item" "$*"
 }
 
-# ===== 通用 helper =====
+# ===== Generic helpers =====
 
-# 找 Python 解释器（优先 python3），输出路径；找不到返回 1
+# Locate a Python interpreter (prefer python3); print path; return 1 if none.
 find_python() {
     local c
     for c in python3 python; do
@@ -67,8 +77,9 @@ find_python() {
     return 1
 }
 
-# 所有 pip 包版本快照（importlib.metadata，一次解释器启动覆盖全部检查项；
-# 只读元数据不 import 模块，避免加载 torch 等重型依赖导致单包耗时数十秒）
+# Snapshot of all installed pip package versions (importlib.metadata). One
+# interpreter startup covers every check item; only metadata is read, modules
+# are NOT imported, to avoid loading heavy deps like torch (tens of seconds).
 PIP_ALL=""
 pip_all() {
     [ -n "$PIP_ALL" ] && return 0
@@ -84,12 +95,12 @@ for d in md.distributions():
     [ -n "$PIP_ALL" ]
 }
 
-# PEP 503 包名归一: 忽略大小写，-/_/. 等价
+# PEP 503 package name normalization: case-insensitive, -/_/. are equivalent.
 norm_key() {
     printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr '[-_.]' '-'
 }
 
-# 输出 pip 包已安装版本（未安装输出空）
+# Print installed version of a pip package (empty if not installed).
 pip_version() {
     pip_all || return 1
     local k
@@ -98,7 +109,7 @@ pip_version() {
         '{ gsub(/[-_.]/, "-", $1); if (tolower($1) == k) { print $2; exit } }'
 }
 
-# 输出可 import 的 Python 模块版本（不可 import 输出空）
+# Print version of an importable Python module (empty if not importable).
 py_mod_version() {
     local py
     py=$(find_python) || return 1
@@ -115,29 +126,30 @@ print(getattr(m, "__version__", "importable (no __version__)"))
 ' "$1" 2>/dev/null
 }
 
-# 系统包通用检查: check_os_pkg <项> <包名>（自动适配 rpm/dpkg）
+# Generic system package check: check_os_pkg <item> <package> (rpm/dpkg aware).
 check_os_pkg() {
     local item="$1" pkg="$2"
     if command -v rpm >/dev/null 2>&1; then
         if rpm -q "$pkg" >/dev/null 2>&1; then
             report "$item" PASS "$(rpm -q "$pkg")"
         else
-            report "$item" FAIL "rpm: $pkg 未安装"
+            report "$item" FAIL "rpm: $pkg not installed"
         fi
     elif command -v dpkg >/dev/null 2>&1; then
         if dpkg -s "$pkg" >/dev/null 2>&1; then
             report "$item" PASS "dpkg: $(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null)"
         else
-            report "$item" FAIL "dpkg: $pkg 未安装"
+            report "$item" FAIL "dpkg: $pkg not installed"
         fi
     else
-        report "$item" INFO "无 rpm/dpkg，无法检查系统包 $pkg"
+        report "$item" INFO "no rpm/dpkg found, cannot check system package $pkg"
     fi
 }
 
-# Python 包通用检查: check_py_pkg <项> <pip 包名> [import 模块名]
-# 默认只查 pip 元数据（快，全脚本仅一次解释器启动）；
-# 加 --import 才真实 import（慢，可抓出"pip 在但 import 失败"的损坏安装）
+# Generic Python package check: check_py_pkg <item> <pip name> [import module]
+# By default only pip metadata is queried (fast; a single interpreter startup
+# for the whole script). Pass --import via DO_IMPORT to actually import the
+# module (slow, but catches "pip present but import fails" breakage).
 check_py_pkg() {
     local item="$1" pip_name="$2" mod_name="${3:-}"
     local v
@@ -145,49 +157,49 @@ check_py_pkg() {
     if [ -n "$v" ]; then
         if [ -n "$mod_name" ] && [ "$DO_IMPORT" -eq 1 ]; then
             if v=$(py_mod_version "$mod_name"); then
-                report "$item" PASS "pip $pip_name==$v，import $mod_name 成功（$v）"
+                report "$item" PASS "pip $pip_name==$v, import $mod_name OK ($v)"
             else
-                report "$item" FAIL "pip $pip_name==$v 已装但 import $mod_name 失败（依赖可能损坏）"
+                report "$item" FAIL "pip $pip_name==$v installed but import $mod_name failed (deps may be broken)"
             fi
         else
             report "$item" PASS "pip $pip_name==$v"
         fi
     elif [ -n "$mod_name" ] && [ "$DO_IMPORT" -eq 1 ]; then
         if v=$(py_mod_version "$mod_name"); then
-            report "$item" PASS "import $mod_name 成功（版本: $v；无 pip 元数据）"
+            report "$item" PASS "import $mod_name OK (version: $v; no pip metadata)"
         else
-            report "$item" FAIL "未找到（pip: $pip_name / import: $mod_name）"
+            report "$item" FAIL "not found (pip: $pip_name / import: $mod_name)"
         fi
     else
-        report "$item" FAIL "未找到（pip: $pip_name）"
+        report "$item" FAIL "not found (pip: $pip_name)"
     fi
 }
 
-# ===== 检查项实现（与 CHECK_LIST 一一对应） =====
+# ===== Check implementations (one-to-one with CHECK_LIST) =====
 
 check_python() {
     local py
     if py=$(find_python); then
         report python PASS "$("$py" -V 2>&1) ($py)"
     else
-        report python FAIL "无 python3/python 解释器"
+        report python FAIL "no python3/python interpreter found"
     fi
 }
 
 check_pip() {
     local py v
     if ! py=$(find_python); then
-        report pip FAIL "无解释器，无法检查 pip"
+        report pip FAIL "no interpreter, cannot check pip"
         return 0
     fi
     if v=$("$py" -m pip -V 2>/dev/null); then
         report pip PASS "$v"
     else
-        report pip FAIL "pip 模块不可用"
+        report pip FAIL "pip module unavailable"
     fi
 }
 
-# ca-certificates 系统包 + 实际证书包文件
+# ca-certificates system package + actual certificate bundle file.
 check_ca_certs() {
     check_os_pkg ca_certs ca-certificates
     local bundle
@@ -195,7 +207,7 @@ check_ca_certs() {
                    /etc/pki/tls/certs/ca-bundle.crt \
                    /etc/ssl/certs/ca-certificates.crt; do
         if [ -s "$bundle" ]; then
-            report ca_certs INFO "证书包: $bundle（$(grep -c '^-----BEGIN CERT' "$bundle") 张证书）"
+            report ca_certs INFO "bundle: $bundle ($(grep -c '^-----BEGIN CERT' "$bundle") certs)"
             break
         fi
     done
@@ -207,7 +219,8 @@ check_modelslim()   { check_py_pkg modelslim ModelSlim modelslim; }
 check_lmcache()     { check_py_pkg lmcache lmcache lmcache; }
 check_guidellm()    { check_py_pkg guidellm guidellm guidellm; }
 
-# 昇腾 CANN toolkit（latest 符号链接即版本号；CANN 9.x 布局回退到 cann 链接）
+# Ascend CANN toolkit (the "latest" symlink resolves to the version; CANN 9.x
+# layout falls back to the "cann" link).
 check_cann() {
     local base="/usr/local/Ascend" latest
     latest=$(readlink -f "$base/ascend-toolkit/latest" 2>/dev/null)
@@ -215,49 +228,53 @@ check_cann() {
     if [ -n "$latest" ] && [ -d "$latest" ]; then
         report cann PASS "toolkit: $latest"
     else
-        report cann FAIL "未找到（$base/ascend-toolkit/latest）"
+        report cann FAIL "not found ($base/ascend-toolkit/latest)"
     fi
 }
 
-# NPU 设备（npu-smi 工具 + /dev/davinci<N> 设备节点；
-# /dev/davinci_manager 是驱动管理节点，不计入 NPU；
-# CANN 9.x 运行时镜像不再自带 npu-smi，设备节点作为兜底信号；
-# 裸 docker run 无 NPU 透传时设备节点为空属正常，报 INFO 不算 FAIL）
+# NPU device (npu-smi tool + /dev/davinci<N> nodes;
+# /dev/davinci_manager is a driver management node and is NOT counted as an
+# NPU; CANN 9.x runtime images no longer ship npu-smi, so device nodes act as
+# a fallback signal; a bare `docker run` without NPU passthrough legitimately
+# has no device nodes -> report INFO, not FAIL).
 check_npu() {
-    local npu_bin nodes="" n=0
+    local npu_bin nodes="" n=0 d
     npu_bin=$(command -v npu-smi 2>/dev/null)
     [ -n "$npu_bin" ] || npu_bin=$(find /usr/local/Ascend -maxdepth 5 -name npu-smi -type f 2>/dev/null | head -n 1)
-    # 只匹配 /dev/davinci<数字>，排除 /dev/davinci_manager
+    # Match only /dev/davinci<number>, excluding /dev/davinci_manager
     for d in /dev/davinci[0-9]*; do
         [ -e "$d" ] || continue
         nodes="${nodes:+$nodes }$d"
         n=$((n + 1))
     done
     if [ "$n" -gt 0 ]; then
-        report npu PASS "可见 $n 个 NPU 设备节点（$nodes）${npu_bin:+；npu-smi: $npu_bin}"
+        report npu PASS "$n NPU device node(s) visible ($nodes)${npu_bin:+; npu-smi: $npu_bin}"
     elif [ -n "$npu_bin" ]; then
-        report npu INFO "npu-smi: $npu_bin，但无 /dev/davinci<N> 设备节点（容器未透传 NPU）"
+        report npu INFO "npu-smi: $npu_bin, but no /dev/davinci<N> nodes (NPU not passed through to container)"
     else
-        report npu INFO "无 npu-smi（新版 CANN 已移除），且无 /dev/davinci<N> 设备节点（容器未透传 NPU）"
+        report npu INFO "no npu-smi (removed in newer CANN), and no /dev/davinci<N> nodes (NPU not passed through to container)"
     fi
 }
 
-# ===== 参数解析（--step 约定与同目录模型脚本集一致） =====
-WANT=()      # 指定项，空 = 全跑
-DO_IMPORT=0  # 1 = 对 Python 模块追加真实 import 校验（慢）
+# ===== Argument parsing (--step convention matches the sibling model
+#       script set) =====
+WANT=()      # selected items; empty = run all
+DO_IMPORT=0  # 1 = additionally verify Python modules via real import (slow)
 
 usage() {
     cat <<EOF
-用法: $0 [--step <id1,id2,...>] [--import]
+Usage: $0 [--step <id1,id2,...>] [--import]
 
-检查项（输出顺序）: ${CHECK_LIST[*]}
+Check items (output order): ${CHECK_LIST[*]}
 
-  --step <id列表>   只跑指定项（逗号分隔、顺序无关），如 --step python,lmcache
-  --import          对 Python 模块追加真实 import 校验（可抓出"pip 在但 import 失败"
-                    的损坏安装；实际加载 torch 等重型依赖，明显变慢，默认关闭）
-  -h, --help        显示本帮助
+  --step <ids>      Run only the specified items (comma-separated, order-independent),
+                    e.g. --step python,lmcache
+  --import          Additionally verify Python modules via real import (catches
+                    "pip present but import fails" breakage; loads heavy deps
+                    like torch, noticeably slower; off by default)
+  -h, --help        Show this help
 
-退出码: 0=无 FAIL；1=有 FAIL；2=参数错误
+Exit code: 0 = no FAIL; 1 = at least one FAIL; 2 = argument error
 EOF
 }
 
@@ -265,7 +282,7 @@ parse_args() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --step)
-                [ "$#" -ge 2 ] || { echo "错误: --step 需要参数" >&2; exit 2; }
+                [ "$#" -ge 2 ] || { echo "Error: --step requires an argument" >&2; exit 2; }
                 IFS=',' read -ra WANT <<< "$2"
                 shift 2
                 ;;
@@ -280,7 +297,7 @@ parse_args() {
             -h|--help)
                 usage; exit 0 ;;
             *)
-                echo "错误: 未知参数 $1" >&2
+                echo "Error: unknown argument $1" >&2
                 usage >&2
                 exit 2
                 ;;
@@ -291,20 +308,21 @@ parse_args() {
     for w in "${WANT[@]}"; do
         case " ${CHECK_LIST[*]} " in
             *" $w "*) ;;
-            *) echo "错误: 未知检查项 $w（可用: ${CHECK_LIST[*]}）" >&2; exit 2 ;;
+            *) echo "Error: unknown check item $w (available: ${CHECK_LIST[*]})" >&2; exit 2 ;;
         esac
     done
 }
 
-# ===== 主逻辑 =====
+# ===== Main logic =====
 
-# 精简容器可能没有 hostname 命令，回退到 /proc
+# Minimal containers may lack the hostname command; fall back to /proc.
 host_name() {
     hostname 2>/dev/null || cat /proc/sys/kernel/hostname 2>/dev/null || echo unknown-host
 }
 
-# 兜底: 部分镜像的 CANN 环境只在 entrypoint/profile 里设置，
-# 非 login shell 运行时手动 source 常见 env 脚本（按 realpath 去重）
+# Fallback: on some images the CANN environment is only set by the
+# entrypoint/profile; when running as a non-login shell, source common env
+# scripts manually (dedupe by realpath).
 load_ascend_env() {
     local f r sourced=""
     for f in /usr/local/Ascend/ascend-toolkit/latest/set_env.sh \
@@ -325,8 +343,11 @@ load_ascend_env() {
 
 print_header() {
     echo "============================================================"
-    echo " 软件环境检查  $(host_name)  $(date '+%F %T')"
-    [ -r /etc/os-release ] && . /etc/os-release && echo " OS: ${PRETTY_NAME:-未知}"
+    echo " Software Environment Check  $(host_name)  $(date '+%F %T')"
+    if [ -r /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release && echo " OS: ${PRETTY_NAME:-unknown}"
+    fi
     echo "============================================================"
 }
 
@@ -341,21 +362,22 @@ run_checks() {
             [ "$want" -eq 1 ] || continue
         fi
         if ! declare -F "check_$id" >/dev/null; then
-            report "$id" FAIL "未实现检查函数 check_$id"
+            report "$id" FAIL "check function check_$id not implemented"
             continue
         fi
         "check_$id"
     done
 }
 
-# 返回值 = 环境门禁（0=无 FAIL）
+# Return value = environment gate (0 = no FAIL).
 print_summary() {
     echo "------------------------------------------------------------"
-    echo "汇总: ${C_PASS}PASS=$PASS${C_RESET} ${C_FAIL}FAIL=$FAIL${C_RESET} ${C_INFO}INFO=$INFO${C_RESET}"
+    echo "Summary: ${C_PASS}PASS=$PASS${C_RESET} ${C_FAIL}FAIL=$FAIL${C_RESET} ${C_INFO}INFO=$INFO${C_RESET}"
     [ "$FAIL" -eq 0 ]
 }
 
 main() {
+    setup_colors
     parse_args "$@"
     load_ascend_env
     print_header

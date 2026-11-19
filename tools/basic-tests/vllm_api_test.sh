@@ -1,51 +1,52 @@
 #!/bin/bash
 ###############################################################################
-# vllm_api_test.sh - vLLM API 增强测试脚本（纯 Shell，无 Python 依赖）
+# vllm_api_test.sh - Enhanced vLLM API test script (pure Shell, no Python deps)
 #
-# 覆盖的 API 系列:
-#   - 预测试:          /health, /v1/models, /v1/chat/completions（基本对话）
-#   - 基础端点:        /health, /version, /v1/models, /v1/models/{id},
+# API families covered:
+#   - Pre-test:        /health, /v1/models, /v1/chat/completions (basic chat)
+#   - Basic endpoints: /health, /version, /v1/models, /v1/models/{id},
 #                      /metrics, /openapi.json, /ping, /load
-#   - OpenAI 兼容:     /v1/completions, /v1/chat/completions,
+#   - OpenAI compat:   /v1/completions, /v1/chat/completions,
 #                      /v1/chat/completions/batch, /v1/embeddings,
 #                      /v1/responses, /v1/responses/{id},
 #                      /v1/responses/{id}/cancel,
 #                      /v1/audio/transcriptions, /v1/audio/translations,
 #                      /v1/chat/completions/render, /v1/completions/render
-#   - Anthropic 兼容:  /v1/messages, /v1/messages/count_tokens
-#   - Cohere 兼容:     /v2/embed, /rerank, /v1/rerank, /v2/rerank
+#   - Anthropic compat:/v1/messages, /v1/messages/count_tokens
+#   - Cohere compat:   /v2/embed, /rerank, /v1/rerank, /v2/rerank
 #   - Pooling/Score:   /score, /v1/score, /pooling
-#   - Tokenize:        /tokenize, /detokenize (往返校验)
+#   - Tokenize:        /tokenize, /detokenize (round-trip check)
 #   - LoRA:            /v1/load_lora_adapter, /v1/unload_lora_adapter
 #   - Batch/File:      /v1/files, /v1/batches
 #   - SageMaker:       /invocations
-#   - 其他:            /generative_scoring, /inference/v1/generate,
+#   - Others:          /generative_scoring, /inference/v1/generate,
 #                      /scale_elastic_ep, /is_scaling_elastic_ep
 #
-# 依赖:
-#   - bash 4.0+、curl
-#   - 可选: jq（用于 JSON 结构校验和精确字段提取，建议安装）
+# Dependencies:
+#   - bash 4.0+, curl
+#   - optional: jq (for JSON structure validation and precise field extraction,
+#     recommended)
 #
-# 使用:
-#   ./vllm_api_test.sh                               # 默认配置
-#   ./vllm_api_test.sh -u http://host:8000 -m model  # 指定地址和模型
-#   ./vllm_api_test.sh -v                            # 打印请求与响应
-#   ./vllm_api_test.sh --stream                      # 启用流式 SSE 测试
-#   ./vllm_api_test.sh --errors                      # 启用错误路径测试
-#   ./vllm_api_test.sh --all                         # 启用全部测试
+# Usage:
+#   ./vllm_api_test.sh                               # default config
+#   ./vllm_api_test.sh -u http://host:8000 -m model  # specify address and model
+#   ./vllm_api_test.sh -v                            # print request & response
+#   ./vllm_api_test.sh --stream                      # enable streaming SSE test
+#   ./vllm_api_test.sh --errors                      # enable error path test
+#   ./vllm_api_test.sh --all                         # enable all tests
 #
-# 环境变量:
-#   VLLM_BASE_URL         服务地址
-#   VLLM_API_KEY          API Key
-#   VLLM_MODEL            模型名称
-#   VERBOSE_MAX_BYTES     -v 模式下单次响应最大打印字节数（默认 4096）
-#   PRETEST_TIMEOUT       预测试请求超时秒数（默认 300，即 5 分钟）
+# Environment variables:
+#   VLLM_BASE_URL         service address
+#   VLLM_API_KEY          API key
+#   VLLM_MODEL            model name
+#   VERBOSE_MAX_BYTES     max bytes printed per response in -v mode (default 4096)
+#   PRETEST_TIMEOUT       pre-test request timeout in seconds (default 300 = 5 min)
 ###############################################################################
 
 set -o pipefail
 
 # ============================================================================
-# 一、全局配置
+# I. Global configuration
 # ============================================================================
 BASE_URL="${VLLM_BASE_URL:-http://localhost:8000}"
 API_KEY="${VLLM_API_KEY:-}"
@@ -55,7 +56,7 @@ VERBOSE=false
 STREAM_TEST=false
 ERROR_TEST=false
 VERBOSE_MAX_BYTES="${VERBOSE_MAX_BYTES:-4096}"
-PRETEST_TIMEOUT="${PRETEST_TIMEOUT:-300}"   # 预测试超时（5 分钟）
+PRETEST_TIMEOUT="${PRETEST_TIMEOUT:-300}"   # pre-test timeout (5 minutes)
 
 RESP_FILE="$(mktemp /tmp/vllm_test_resp.XXXXXX.json)"
 STREAM_FILE="$(mktemp /tmp/vllm_test_stream.XXXXXX.txt)"
@@ -70,7 +71,7 @@ declare -a FAILED_TESTS=()
 declare -a SKIPPED_TESTS=()
 
 # ============================================================================
-# 二、通用工具
+# II. Generic utilities
 # ============================================================================
 log_info()                 { echo -e "${BLUE}[INFO]${NC} $*"; }
 log_pass()                 { echo -e "${GREEN}[PASS]${NC} $*"; }
@@ -90,22 +91,22 @@ trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
 # classify_404 <file>
-#   判断 404 是端点不存在，还是资源不存在
-#   输出: unsupported | resource_missing
+#   Decide whether a 404 means "endpoint not found" or "resource not found".
+#   Output: unsupported | resource_missing
 # ---------------------------------------------------------------------------
 classify_404() {
     local file="$1"
-    # 资源不存在：形如 {"error":{"...","code":404}}
+    # resource missing: e.g. {"error":{"...","code":404}}
     if grep -qE '"code"[[:space:]]*:[[:space:]]*404' "$file" 2>/dev/null; then
         echo "resource_missing"
         return
     fi
-    # 端点不存在：形如 {"detail":"Not Found"}
+    # endpoint not found: e.g. {"detail":"Not Found"}
     if grep -qE '"detail"[[:space:]]*:[[:space:]]*"Not Found"' "$file" 2>/dev/null; then
         echo "unsupported"
         return
     fi
-    # 无法判断，保守归为端点不存在
+    # undetermined, conservatively treat as endpoint not found
     echo "unsupported"
 }
 
@@ -137,7 +138,8 @@ extract_response_id() {
 
 # ---------------------------------------------------------------------------
 # extract_tokens_array <file>
-#   从 /tokenize 响应中提取 tokens 数组的 JSON 字符串，如 [9419,1814]
+#   Extract the tokens array as a JSON string from a /tokenize response,
+#   e.g. [9419,1814]
 # ---------------------------------------------------------------------------
 extract_tokens_array() {
     local file="$1"
@@ -218,7 +220,7 @@ do_request() {
 
 # ---------------------------------------------------------------------------
 # do_request_with_timeout <method> <path> [json_data] [timeout]
-#   与 do_request 相同，但允许单独指定超时时间（秒）
+#   Same as do_request, but allows a per-call timeout (seconds).
 # ---------------------------------------------------------------------------
 do_request_with_timeout() {
     local method="$1" path="$2" data="${3:-}" custom_timeout="${4:-$TIMEOUT}"
@@ -263,8 +265,25 @@ do_request_multipart() {
 }
 
 # ---------------------------------------------------------------------------
+# record_404_405 <name> <http_code>
+#   Shared classifier for 404/405: endpoint-not-found vs resource-missing.
+# ---------------------------------------------------------------------------
+record_404_405() {
+    local name="$1" http_code="$2"
+    local kind
+    kind=$(classify_404 "$RESP_FILE")
+    if [ "$kind" = "resource_missing" ]; then
+        log_unsupported_resource "$name (HTTP $http_code, endpoint exists but resource missing)"
+        UNSUPPORTED_RESOURCE=$((UNSUPPORTED_RESOURCE + 1))
+    else
+        log_unsupported "$name (HTTP $http_code, endpoint not found)"
+        UNSUPPORTED=$((UNSUPPORTED + 1))
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # record_result <name> <http_code> <expected>
-#   404/405 会根据响应体自动分类为「端点不存在」或「资源不存在」
+#   404/405 are auto-classified as endpoint-not-found or resource-missing.
 # ---------------------------------------------------------------------------
 record_result() {
     local name="$1" http_code="$2" expected="$3"
@@ -272,21 +291,13 @@ record_result() {
         log_pass "$name (HTTP $http_code)"
         PASS=$((PASS + 1))
     elif [ "$http_code" = "000" ]; then
-        log_skip "$name (连接失败)"
+        log_skip "$name (connection failed)"
         SKIP=$((SKIP + 1))
         SKIPPED_TESTS+=("$name")
     elif [ "$http_code" = "404" ] || [ "$http_code" = "405" ]; then
-        local kind
-        kind=$(classify_404 "$RESP_FILE")
-        if [ "$kind" = "resource_missing" ]; then
-            log_unsupported_resource "$name (HTTP $http_code, 端点存在但资源不存在)"
-            UNSUPPORTED_RESOURCE=$((UNSUPPORTED_RESOURCE + 1))
-        else
-            log_unsupported "$name (HTTP $http_code, 端点不存在)"
-            UNSUPPORTED=$((UNSUPPORTED + 1))
-        fi
+        record_404_405 "$name" "$http_code"
     else
-        log_fail "$name (HTTP $http_code, 期望 $expected)"
+        log_fail "$name (HTTP $http_code, expected $expected)"
         FAIL=$((FAIL + 1))
         FAILED_TESTS+=("$name")
     fi
@@ -306,21 +317,13 @@ record_result_any() {
         fi
     done
     if [ "$http_code" = "000" ]; then
-        log_skip "$name (连接失败)"
+        log_skip "$name (connection failed)"
         SKIP=$((SKIP + 1))
         SKIPPED_TESTS+=("$name")
     elif [ "$http_code" = "404" ] || [ "$http_code" = "405" ]; then
-        local kind
-        kind=$(classify_404 "$RESP_FILE")
-        if [ "$kind" = "resource_missing" ]; then
-            log_unsupported_resource "$name (HTTP $http_code, 端点存在但资源不存在)"
-            UNSUPPORTED_RESOURCE=$((UNSUPPORTED_RESOURCE + 1))
-        else
-            log_unsupported "$name (HTTP $http_code, 端点不存在)"
-            UNSUPPORTED=$((UNSUPPORTED + 1))
-        fi
+        record_404_405 "$name" "$http_code"
     else
-        log_fail "$name (HTTP $http_code, 期望 $* 之一)"
+        log_fail "$name (HTTP $http_code, expected one of: $*)"
         FAIL=$((FAIL + 1))
         FAILED_TESTS+=("$name")
     fi
@@ -341,8 +344,21 @@ validate_json() {
 }
 
 # ---------------------------------------------------------------------------
+# check_json_fields <name> <file> <required_keys...>
+#   Fail the named test if the response is valid HTTP but malformed JSON.
+# ---------------------------------------------------------------------------
+check_json_fields() {
+    local name="$1" file="$2"; shift 2
+    if ! validate_json "$file" "$@"; then
+        log_fail "$name response structure validation failed"
+        FAIL=$((FAIL + 1))
+        FAILED_TESTS+=("$name (structure check)")
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # show_response <method> <path> [json_data]
-#   响应超过 VERBOSE_MAX_BYTES 时截断打印
+#   Truncates output when the response exceeds VERBOSE_MAX_BYTES.
 # ---------------------------------------------------------------------------
 show_response() {
     [ "$VERBOSE" = true ] || return 0
@@ -373,8 +389,8 @@ show_response() {
 
 # ---------------------------------------------------------------------------
 # generate_silent_wav <file>
-#   用 printf 直接生成一个最小静音 WAV 文件
-#   16kHz, 单声道, 16bit PCM, 1600 个采样（约 0.1 秒静音）
+#   Write a minimal silent WAV file with printf.
+#   16kHz, mono, 16bit PCM, 1600 samples (~0.1s of silence).
 # ---------------------------------------------------------------------------
 generate_silent_wav() {
     local file="$1"
@@ -386,70 +402,67 @@ generate_silent_wav() {
 }
 
 # ============================================================================
-# 三、预测试（在基础端点测试之前运行）
-#   覆盖：
+# III. Pre-test (runs before the basic endpoint tests)
+#   Covers:
 #     - GET  /health
 #     - GET  /v1/models
-#     - POST /v1/chat/completions（基本对话）
-#   全部使用 PRETEST_TIMEOUT（默认 300s）作为请求超时
+#     - POST /v1/chat/completions (basic chat)
+#   All use PRETEST_TIMEOUT (default 300s) as the request timeout.
 # ============================================================================
 pretest() {
-    log_info ">>> 预测试（超时 ${PRETEST_TIMEOUT}s） <<<"
+    log_info ">>> Pre-test (timeout ${PRETEST_TIMEOUT}s) <<<"
     echo ""
 
     # ------------------------------------------------------------------
-    # 预测试 1/3：健康检查
+    # Pre-test 1/3: health check
     # ------------------------------------------------------------------
-    log_info "预测试 1/3: GET /health ..."
+    log_info "Pre-test 1/3: GET /health ..."
     local code
     code=$(do_request_with_timeout GET "/health" "" "$PRETEST_TIMEOUT")
-    record_result "预测试 GET /health" "$code" "200"
+    record_result "Pre-test GET /health" "$code" "200"
     show_response GET "/health"
 
     # ------------------------------------------------------------------
-    # 预测试 2/3：模型列表
+    # Pre-test 2/3: model list
     # ------------------------------------------------------------------
-    log_info "预测试 2/3: GET /v1/models ..."
+    log_info "Pre-test 2/3: GET /v1/models ..."
     code=$(do_request_with_timeout GET "/v1/models" "" "$PRETEST_TIMEOUT")
-    record_result "预测试 GET /v1/models" "$code" "200"
+    record_result "Pre-test GET /v1/models" "$code" "200"
     show_response GET "/v1/models"
 
     # ------------------------------------------------------------------
-    # 预测试 3/3：基本对话
-    #   若脚本未指定 --model，则回退到示例中的默认模型名
+    # Pre-test 3/3: basic chat
+    #   If no --model was given, fall back to the default model name.
     # ------------------------------------------------------------------
-    log_info "预测试 3/3: POST /v1/chat/completions ..."
+    log_info "Pre-test 3/3: POST /v1/chat/completions ..."
     local pretest_model="${MODEL}"
     local data
     data=$(cat <<EOF
 {
     "model": "$pretest_model",
-    "messages": [{"role": "user", "content": "97乘以23等于多少？"}],
+    "messages": [{"role": "user", "content": "What is 97 times 23?"}],
     "max_tokens": 512,
     "temperature": 0.7
 }
 EOF
 )
     code=$(do_request_with_timeout POST "/v1/chat/completions" "$data" "$PRETEST_TIMEOUT")
-    record_result "预测试 POST /v1/chat/completions" "$code" "200"
-
-    if [ "$code" = "200" ] && ! validate_json "$RESP_FILE" "choices"; then
-        log_fail "预测试 POST /v1/chat/completions 响应结构校验失败"
-        FAIL=$((FAIL + 1))
-        FAILED_TESTS+=("预测试 POST /v1/chat/completions (结构校验)")
+    record_result "Pre-test POST /v1/chat/completions" "$code" "200"
+    if [ "$code" = "200" ]; then
+        check_json_fields "Pre-test POST /v1/chat/completions" "$RESP_FILE" "choices"
     fi
     show_response POST "/v1/chat/completions" "$data"
 
     echo ""
-    log_info ">>> 预测试结束 <<<"
+    log_info ">>> Pre-test done <<<"
     echo ""
 }
 
 # ============================================================================
-# 四、基础端点
+# IV. Basic endpoints
 # ============================================================================
 test_health() {
-    log_info "测试 /health ..."
+    log_info "Testing /health ..."
     local code
     code=$(do_request GET "/health")
     record_result "GET /health" "$code" "200"
@@ -457,7 +470,7 @@ test_health() {
 }
 
 test_version() {
-    log_info "测试 /version ..."
+    log_info "Testing /version ..."
     local code
     code=$(do_request GET "/version")
     record_result "GET /version" "$code" "200"
@@ -465,14 +478,14 @@ test_version() {
 }
 
 test_models() {
-    log_info "测试 /v1/models ..."
+    log_info "Testing /v1/models ..."
     local code
     code=$(do_request GET "/v1/models")
     record_result "GET /v1/models" "$code" "200"
     show_response GET "/v1/models"
 
     if [ "$code" = "200" ] && [ -n "$MODEL" ]; then
-        log_info "测试 /v1/models/$MODEL ..."
+        log_info "Testing /v1/models/$MODEL ..."
         local model_code
         model_code=$(do_request GET "/v1/models/$MODEL")
         record_result "GET /v1/models/{id}" "$model_code" "200"
@@ -481,7 +494,7 @@ test_models() {
 }
 
 test_metrics() {
-    log_info "测试 /metrics ..."
+    log_info "Testing /metrics ..."
     local code
     code=$(do_request GET "/metrics")
     record_result "GET /metrics" "$code" "200"
@@ -489,7 +502,7 @@ test_metrics() {
 }
 
 test_openapi() {
-    log_info "测试 /openapi.json ..."
+    log_info "Testing /openapi.json ..."
     local code
     code=$(do_request GET "/openapi.json")
     record_result "GET /openapi.json" "$code" "200"
@@ -497,20 +510,20 @@ test_openapi() {
 }
 
 test_ping() {
-    log_info "测试 /ping (GET) ..."
+    log_info "Testing /ping (GET) ..."
     local code
     code=$(do_request GET "/ping")
     record_result_any "GET /ping" "$code" "200" "404"
     show_response GET "/ping"
 
-    log_info "测试 /ping (POST) ..."
+    log_info "Testing /ping (POST) ..."
     code=$(do_request POST "/ping")
     record_result_any "POST /ping" "$code" "200" "404"
     show_response POST "/ping"
 }
 
 test_load() {
-    log_info "测试 /load ..."
+    log_info "Testing /load ..."
     local code
     code=$(do_request GET "/load")
     record_result_any "GET /load" "$code" "200" "404"
@@ -518,10 +531,10 @@ test_load() {
 }
 
 # ============================================================================
-# 五、OpenAI 兼容 API
+# V. OpenAI-compatible API
 # ============================================================================
 test_completions() {
-    log_info "测试 /v1/completions ..."
+    log_info "Testing /v1/completions ..."
     local data code
     data=$(cat <<EOF
 {
@@ -535,10 +548,8 @@ EOF
 )
     code=$(do_request POST "/v1/completions" "$data")
     record_result "POST /v1/completions" "$code" "200"
-    if [ "$code" = "200" ] && ! validate_json "$RESP_FILE" "choices" "usage"; then
-        log_fail "POST /v1/completions 响应结构校验失败"
-        FAIL=$((FAIL + 1))
-        FAILED_TESTS+=("POST /v1/completions (结构校验)")
+    if [ "$code" = "200" ]; then
+        check_json_fields "POST /v1/completions" "$RESP_FILE" "choices" "usage"
     fi
     show_response POST "/v1/completions" "$data"
 
@@ -550,7 +561,7 @@ EOF
 }
 
 test_chat_completions() {
-    log_info "测试 /v1/chat/completions ..."
+    log_info "Testing /v1/chat/completions ..."
     local data code
     data=$(cat <<EOF
 {
@@ -565,10 +576,8 @@ EOF
 )
     code=$(do_request POST "/v1/chat/completions" "$data")
     record_result "POST /v1/chat/completions" "$code" "200"
-    if [ "$code" = "200" ] && ! validate_json "$RESP_FILE" "choices"; then
-        log_fail "POST /v1/chat/completions 响应结构校验失败"
-        FAIL=$((FAIL + 1))
-        FAILED_TESTS+=("POST /v1/chat/completions (结构校验)")
+    if [ "$code" = "200" ]; then
+        check_json_fields "POST /v1/chat/completions" "$RESP_FILE" "choices"
     fi
     show_response POST "/v1/chat/completions" "$data"
 
@@ -580,7 +589,7 @@ EOF
 }
 
 test_chat_completions_batch() {
-    log_info "测试 /v1/chat/completions/batch ..."
+    log_info "Testing /v1/chat/completions/batch ..."
     local data code
     data=$(cat <<EOF
 {
@@ -599,7 +608,7 @@ EOF
 }
 
 test_chat_completions_render() {
-    log_info "测试 /v1/chat/completions/render ..."
+    log_info "Testing /v1/chat/completions/render ..."
     local data code
     data=$(cat <<EOF
 {
@@ -615,7 +624,7 @@ EOF
 }
 
 test_completions_render() {
-    log_info "测试 /v1/completions/render ..."
+    log_info "Testing /v1/completions/render ..."
     local data code
     data=$(cat <<EOF
 {
@@ -631,7 +640,7 @@ EOF
 }
 
 test_embeddings() {
-    log_info "测试 /v1/embeddings ..."
+    log_info "Testing /v1/embeddings ..."
     local data code
     data=$(cat <<EOF
 {
@@ -642,16 +651,14 @@ EOF
 )
     code=$(do_request POST "/v1/embeddings" "$data")
     record_result "POST /v1/embeddings" "$code" "200"
-    if [ "$code" = "200" ] && ! validate_json "$RESP_FILE" "data" "usage"; then
-        log_fail "POST /v1/embeddings 响应结构校验失败"
-        FAIL=$((FAIL + 1))
-        FAILED_TESTS+=("POST /v1/embeddings (结构校验)")
+    if [ "$code" = "200" ]; then
+        check_json_fields "POST /v1/embeddings" "$RESP_FILE" "data" "usage"
     fi
     show_response POST "/v1/embeddings" "$data"
 }
 
 test_responses() {
-    log_info "测试 /v1/responses ..."
+    log_info "Testing /v1/responses ..."
     local data code
     data=$(cat <<EOF
 {
@@ -662,10 +669,8 @@ EOF
 )
     code=$(do_request POST "/v1/responses" "$data")
     record_result "POST /v1/responses" "$code" "200"
-    if [ "$code" = "200" ] && ! validate_json "$RESP_FILE" "id"; then
-        log_fail "POST /v1/responses 响应结构校验失败"
-        FAIL=$((FAIL + 1))
-        FAILED_TESTS+=("POST /v1/responses (结构校验)")
+    if [ "$code" = "200" ]; then
+        check_json_fields "POST /v1/responses" "$RESP_FILE" "id"
     fi
     show_response POST "/v1/responses" "$data"
 
@@ -673,13 +678,13 @@ EOF
         local resp_id
         resp_id=$(extract_response_id "$RESP_FILE")
         if [ -n "$resp_id" ] && [ "$resp_id" != "null" ]; then
-            log_info "测试 GET /v1/responses/$resp_id ..."
+            log_info "Testing GET /v1/responses/$resp_id ..."
             local get_code
             get_code=$(do_request GET "/v1/responses/$resp_id")
             record_result "GET /v1/responses/{id}" "$get_code" "200"
             show_response GET "/v1/responses/$resp_id"
 
-            log_info "测试 POST /v1/responses/$resp_id/cancel ..."
+            log_info "Testing POST /v1/responses/$resp_id/cancel ..."
             local cancel_code
             cancel_code=$(do_request POST "/v1/responses/$resp_id/cancel")
             record_result_any "POST /v1/responses/{id}/cancel" "$cancel_code" "200" "404"
@@ -689,12 +694,12 @@ EOF
 }
 
 test_audio_transcriptions() {
-    log_info "测试 /v1/audio/transcriptions ..."
+    log_info "Testing /v1/audio/transcriptions ..."
     local code
 
     if [ ! -f "$AUDIO_FILE" ]; then
         if ! generate_silent_wav "$AUDIO_FILE"; then
-            log_skip "无法生成测试音频文件，跳过"
+            log_skip "cannot generate test audio file, skipping"
             SKIP=$((SKIP + 1))
             SKIPPED_TESTS+=("POST /v1/audio/transcriptions")
             return
@@ -708,11 +713,11 @@ test_audio_transcriptions() {
 }
 
 test_audio_translations() {
-    log_info "测试 /v1/audio/translations ..."
+    log_info "Testing /v1/audio/translations ..."
     local code
 
     if [ ! -f "$AUDIO_FILE" ]; then
-        log_skip "测试音频文件不存在，跳过"
+        log_skip "test audio file does not exist, skipping"
         SKIP=$((SKIP + 1))
         SKIPPED_TESTS+=("POST /v1/audio/translations")
         return
@@ -729,7 +734,7 @@ test_audio_translations() {
 # ---------------------------------------------------------------------------
 test_stream() {
     local name="$1" path="$2" data="$3"
-    log_info "测试 $name ..."
+    log_info "Testing $name ..."
     local url="${BASE_URL}${path}"
     local args=(-s -N --max-time "$TIMEOUT")
     [ -n "$API_KEY" ] && args+=(-H "Authorization: Bearer $API_KEY")
@@ -740,20 +745,20 @@ test_stream() {
         | head -c 4096 > "$STREAM_FILE"
 
     if grep -q "data:" "$STREAM_FILE"; then
-        log_pass "$name (收到 SSE 数据)"
+        log_pass "$name (received SSE data)"
         PASS=$((PASS + 1))
     else
-        log_fail "$name (未收到有效 SSE 数据)"
+        log_fail "$name (no valid SSE data received)"
         FAIL=$((FAIL + 1))
         FAILED_TESTS+=("$name")
     fi
 }
 
 # ============================================================================
-# 六、Anthropic 兼容 API
+# VI. Anthropic-compatible API
 # ============================================================================
 test_anthropic_messages() {
-    log_info "测试 /v1/messages (Anthropic) ..."
+    log_info "Testing /v1/messages (Anthropic) ..."
     local data code
     data=$(cat <<EOF
 {
@@ -775,7 +780,7 @@ EOF
 }
 
 test_anthropic_count_tokens() {
-    log_info "测试 /v1/messages/count_tokens (Anthropic) ..."
+    log_info "Testing /v1/messages/count_tokens (Anthropic) ..."
     local data code
     data=$(cat <<EOF
 {
@@ -790,10 +795,10 @@ EOF
 }
 
 # ============================================================================
-# 七、Cohere 兼容 API
+# VII. Cohere-compatible API
 # ============================================================================
 test_cohere_embed() {
-    log_info "测试 /v2/embed (Cohere) ..."
+    log_info "Testing /v2/embed (Cohere) ..."
     local data code
     data=$(cat <<EOF
 {
@@ -824,7 +829,7 @@ EOF
 )
     local endpoint code
     for endpoint in "/rerank" "/v1/rerank" "/v2/rerank"; do
-        log_info "测试 $endpoint (Cohere alias) ..."
+        log_info "Testing $endpoint (Cohere alias) ..."
         code=$(do_request POST "$endpoint" "$data")
         record_result "POST $endpoint" "$code" "200"
         show_response POST "$endpoint" "$data"
@@ -832,7 +837,7 @@ EOF
 }
 
 # ============================================================================
-# 八、Pooling / Score API
+# VIII. Pooling / Score API
 # ============================================================================
 test_score_aliases() {
     local data
@@ -846,7 +851,7 @@ EOF
 )
     local endpoint code
     for endpoint in "/score" "/v1/score"; do
-        log_info "测试 $endpoint ..."
+        log_info "Testing $endpoint ..."
         code=$(do_request POST "$endpoint" "$data")
         record_result "POST $endpoint" "$code" "200"
         show_response POST "$endpoint" "$data"
@@ -854,7 +859,7 @@ EOF
 }
 
 test_pooling() {
-    log_info "测试 /pooling ..."
+    log_info "Testing /pooling ..."
     local data code
     data=$(cat <<EOF
 {
@@ -869,10 +874,10 @@ EOF
 }
 
 # ============================================================================
-# 九、Tokenize / Detokenize（含往返校验）
+# IX. Tokenize / Detokenize (with round-trip check)
 # ============================================================================
 test_tokenize() {
-    log_info "测试 /tokenize ..."
+    log_info "Testing /tokenize ..."
     local data code
     data=$(cat <<EOF
 {
@@ -886,11 +891,11 @@ EOF
     show_response POST "/tokenize" "$data"
 }
 
-# 单次 detokenize 测试（使用 /tokenize 的结果做往返校验）
+# Single detokenize test (uses the /tokenize result for a round-trip check)
 test_detokenize_roundtrip() {
-    log_info "测试 /detokenize（往返校验）..."
+    log_info "Testing /detokenize (round-trip) ..."
 
-    # 第一步：tokenize
+    # Step 1: tokenize
     local tokenize_data code
     tokenize_data=$(cat <<EOF
 {
@@ -901,86 +906,71 @@ EOF
 )
     code=$(do_request POST "/tokenize" "$tokenize_data")
     if [ "$code" != "200" ]; then
-        log_skip "POST /detokenize（往返）：前置 /tokenize 失败 (HTTP $code)"
+        log_skip "POST /detokenize (round-trip): pre-call /tokenize failed (HTTP $code)"
         SKIP=$((SKIP + 1))
-        SKIPPED_TESTS+=("POST /detokenize (往返)")
+        SKIPPED_TESTS+=("POST /detokenize (round-trip)")
         return
     fi
 
     local tokens
     tokens=$(extract_tokens_array "$RESP_FILE")
     if [ -z "$tokens" ] || [ "$tokens" = "[]" ]; then
-        log_skip "POST /detokenize（往返）：未能提取 tokens"
+        log_skip "POST /detokenize (round-trip): failed to extract tokens"
         SKIP=$((SKIP + 1))
-        SKIPPED_TESTS+=("POST /detokenize (往返)")
+        SKIPPED_TESTS+=("POST /detokenize (round-trip)")
         return
     fi
 
-    # 第二步：detokenize
+    # Step 2: detokenize
     local detok_data
     detok_data="{\"model\":\"$MODEL\",\"tokens\":$tokens}"
     code=$(do_request POST "/detokenize" "$detok_data")
-    record_result "POST /detokenize (往返)" "$code" "200"
+    record_result "POST /detokenize (round-trip)" "$code" "200"
     show_response POST "/detokenize" "$detok_data"
 
     if [ "$code" = "200" ]; then
         local prompt
         prompt=$(extract_detokenize_prompt "$RESP_FILE")
         if printf '%s' "$prompt" | grep -q "Hello"; then
-            log_pass "往返校验通过：detokenize(tokenize(\"Hello world\")) 含 \"Hello\""
+            log_pass "round-trip OK: detokenize(tokenize(\"Hello world\")) contains \"Hello\""
             PASS=$((PASS + 1))
         else
-            log_fail "往返校验失败：返回 prompt=\"$prompt\"，不含 \"Hello\""
+            log_fail "round-trip FAILED: returned prompt=\"$prompt\", does not contain \"Hello\""
             FAIL=$((FAIL + 1))
-            FAILED_TESTS+=("POST /detokenize (往返一致性)")
+            FAILED_TESTS+=("POST /detokenize (round-trip consistency)")
         fi
     fi
 }
 
 # ============================================================================
-# 十、LoRA 动态加载/卸载
+# X. LoRA dynamic load / unload
 # ============================================================================
 test_lora() {
-    log_info "测试 LoRA 动态加载/卸载 ..."
+    log_info "Testing LoRA dynamic load / unload ..."
 
     local data code
     data='{"lora_name": "test-lora", "lora_path": "/tmp/nonexistent-lora"}'
     code=$(do_request POST "/v1/load_lora_adapter" "$data")
 
     if [ "$code" = "404" ] || [ "$code" = "405" ]; then
-        local kind
-        kind=$(classify_404 "$RESP_FILE")
-        if [ "$kind" = "resource_missing" ]; then
-            log_unsupported_resource "POST /v1/load_lora_adapter (HTTP $code, 端点存在但资源不存在)"
-            UNSUPPORTED_RESOURCE=$((UNSUPPORTED_RESOURCE + 1))
-        else
-            log_unsupported "POST /v1/load_lora_adapter (HTTP $code, 端点不存在)"
-            UNSUPPORTED=$((UNSUPPORTED + 1))
-        fi
+        record_404_405 "POST /v1/load_lora_adapter" "$code"
         return
     fi
-    # 400 表示端点存在但参数无效，也算通过
+    # 400 means the endpoint exists but the parameters are invalid; also pass
     record_result_any "POST /v1/load_lora_adapter" "$code" "200" "400"
     show_response POST "/v1/load_lora_adapter" "$data"
 }
 
 # ============================================================================
-# 十一、Batch / File API
+# XI. Batch / File API
 # ============================================================================
 test_batch_files() {
-    log_info "测试 Batch / File API ..."
+    log_info "Testing Batch / File API ..."
 
-    local code kind
+    local code
     code=$(do_request GET "/v1/files")
     if [ "$code" = "404" ] || [ "$code" = "405" ]; then
-        kind=$(classify_404 "$RESP_FILE")
-        if [ "$kind" = "resource_missing" ]; then
-            log_unsupported_resource "GET /v1/files (HTTP $code, 端点存在但资源不存在)"
-            UNSUPPORTED_RESOURCE=$((UNSUPPORTED_RESOURCE + 1))
-        else
-            log_unsupported "GET /v1/files (HTTP $code, 端点不存在)"
-            UNSUPPORTED=$((UNSUPPORTED + 1))
-        fi
+        record_404_405 "GET /v1/files" "$code"
     else
         record_result "GET /v1/files" "$code" "200"
         show_response GET "/v1/files"
@@ -988,14 +978,7 @@ test_batch_files() {
 
     code=$(do_request GET "/v1/batches")
     if [ "$code" = "404" ] || [ "$code" = "405" ]; then
-        kind=$(classify_404 "$RESP_FILE")
-        if [ "$kind" = "resource_missing" ]; then
-            log_unsupported_resource "GET /v1/batches (HTTP $code, 端点存在但资源不存在)"
-            UNSUPPORTED_RESOURCE=$((UNSUPPORTED_RESOURCE + 1))
-        else
-            log_unsupported "GET /v1/batches (HTTP $code, 端点不存在)"
-            UNSUPPORTED=$((UNSUPPORTED + 1))
-        fi
+        record_404_405 "GET /v1/batches" "$code"
     else
         record_result "GET /v1/batches" "$code" "200"
         show_response GET "/v1/batches"
@@ -1003,11 +986,11 @@ test_batch_files() {
 }
 
 # ============================================================================
-# 十二、SageMaker / 其他端点
+# XII. SageMaker / other endpoints
 # ============================================================================
 test_sagemaker_invocations() {
-    log_info "测试 /invocations (SageMaker) ..."
-    # 该端点对请求体格式要求依实现而异，接受 200/400/415/500
+    log_info "Testing /invocations (SageMaker) ..."
+    # Request-body format varies by implementation; accept 200/400/415/500
     local code
     code=$(do_request POST "/invocations" \
         "{\"model\":\"$MODEL\",\"prompt\":\"Hello\",\"max_tokens\":5}")
@@ -1016,7 +999,7 @@ test_sagemaker_invocations() {
 }
 
 test_generative_scoring() {
-    log_info "测试 /generative_scoring ..."
+    log_info "Testing /generative_scoring ..."
     local data code
     data=$(cat <<EOF
 {
@@ -1032,7 +1015,7 @@ EOF
 }
 
 test_inference_generate() {
-    log_info "测试 /inference/v1/generate ..."
+    log_info "Testing /inference/v1/generate ..."
     local data code
     data=$(cat <<EOF
 {
@@ -1047,98 +1030,98 @@ EOF
 }
 
 test_scale_elastic_ep() {
-    log_info "测试 /is_scaling_elastic_ep ..."
+    log_info "Testing /is_scaling_elastic_ep ..."
     local code
     code=$(do_request POST "/is_scaling_elastic_ep")
     record_result_any "POST /is_scaling_elastic_ep" "$code" "200" "400" "404" "500"
     show_response POST "/is_scaling_elastic_ep"
 
-    log_info "测试 /scale_elastic_ep ..."
+    log_info "Testing /scale_elastic_ep ..."
     code=$(do_request POST "/scale_elastic_ep")
     record_result_any "POST /scale_elastic_ep" "$code" "200" "400" "404" "408" "500"
     show_response POST "/scale_elastic_ep"
 }
 
 # ============================================================================
-# 十三、错误路径测试
+# XIII. Error path tests
 # ============================================================================
 test_error_paths() {
     [ "$ERROR_TEST" = true ] || return 0
 
-    log_info ">>> 错误路径测试 <<<"
+    log_info ">>> Error path tests <<<"
 
     local code
 
-    # 无效模型
+    # invalid model
     code=$(do_request POST "/v1/chat/completions" \
         '{"model":"nonexistent-model-xyz","messages":[{"role":"user","content":"hi"}],"max_tokens":5}')
     if [ "$code" = "400" ] || [ "$code" = "404" ] || [ "$code" = "422" ]; then
-        log_pass "无效模型返回 HTTP $code"
+        log_pass "invalid model returned HTTP $code"
         PASS=$((PASS + 1))
     else
-        log_fail "无效模型返回 HTTP $code (期望 400/404/422)"
+        log_fail "invalid model returned HTTP $code (expected 400/404/422)"
         FAIL=$((FAIL + 1))
-        FAILED_TESTS+=("无效模型错误处理")
+        FAILED_TESTS+=("invalid model error handling")
     fi
 
-    # 无效参数（max_tokens 为负数）
+    # invalid parameter (negative max_tokens)
     code=$(do_request POST "/v1/chat/completions" \
         "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":-1}")
     if [ "$code" = "400" ] || [ "$code" = "422" ]; then
-        log_pass "无效参数返回 HTTP $code"
+        log_pass "invalid parameter returned HTTP $code"
         PASS=$((PASS + 1))
     else
-        log_fail "无效参数返回 HTTP $code (期望 400/422)"
+        log_fail "invalid parameter returned HTTP $code (expected 400/422)"
         FAIL=$((FAIL + 1))
-        FAILED_TESTS+=("无效参数错误处理")
+        FAILED_TESTS+=("invalid parameter error handling")
     fi
 
-    # 不存在的端点
+    # nonexistent endpoint
     code=$(do_request GET "/v1/nonexistent-endpoint")
     if [ "$code" = "404" ]; then
-        log_pass "不存在的端点返回 HTTP 404"
+        log_pass "nonexistent endpoint returned HTTP 404"
         PASS=$((PASS + 1))
     else
-        log_fail "不存在的端点返回 HTTP $code (期望 404)"
+        log_fail "nonexistent endpoint returned HTTP $code (expected 404)"
         FAIL=$((FAIL + 1))
-        FAILED_TESTS+=("404 错误处理")
+        FAILED_TESTS+=("404 error handling")
     fi
 }
 
 # ============================================================================
-# 十四、主流程
+# XIV. Main flow
 # ============================================================================
 print_usage() {
     cat <<EOF
-用法: $0 [选项]
+Usage: $0 [options]
 
-选项:
-  -u, --url URL        vLLM 服务地址 (默认: http://localhost:8000)
-  -m, --model MODEL    模型名称 (默认: 自动从 /v1/models 获取)
-  -k, --key KEY        API Key (可选)
-  -t, --timeout SEC    请求超时秒数 (默认: 30)
-  -v, --verbose        打印完整 request 和 reply（超过 VERBOSE_MAX_BYTES 截断）
-      --stream         启用流式 SSE 测试
-      --errors         启用错误路径测试
-      --all            启用全部测试 (--stream --errors)
-  -h, --help           显示帮助
+Options:
+  -u, --url URL        vLLM service address (default: http://localhost:8000)
+  -m, --model MODEL    model name (default: auto-detect from /v1/models)
+  -k, --key KEY        API key (optional)
+  -t, --timeout SEC    request timeout in seconds (default: 30)
+  -v, --verbose        print full request and reply (truncated past VERBOSE_MAX_BYTES)
+      --stream         enable streaming SSE tests
+      --errors         enable error path tests
+      --all            enable all tests (--stream --errors)
+  -h, --help           show this help
 
-环境变量:
-  VLLM_BASE_URL        服务地址
-  VLLM_API_KEY         API Key
-  VLLM_MODEL           模型名称
-  VERBOSE_MAX_BYTES    -v 模式下响应最大打印字节数（默认 4096）
-  PRETEST_TIMEOUT      预测试请求超时秒数（默认 300，即 5 分钟）
+Environment variables:
+  VLLM_BASE_URL        service address
+  VLLM_API_KEY         API key
+  VLLM_MODEL           model name
+  VERBOSE_MAX_BYTES    max response bytes printed in -v mode (default 4096)
+  PRETEST_TIMEOUT      pre-test request timeout in seconds (default 300 = 5 min)
 
-示例:
+Examples:
   $0 -u http://192.168.1.100:8000 -m Qwen3-27B
   $0 -k sk-abc123 -v --all
   VERBOSE_MAX_BYTES=16384 $0 -v
   PRETEST_TIMEOUT=600 $0 -m Qwen3.8-Flash-Next-w8a8-mtp
 
-依赖:
-  bash 4.0+、curl
-  可选: jq（用于 JSON 结构校验和精确字段提取，建议安装）
+Dependencies:
+  bash 4.0+, curl
+  optional: jq (for JSON structure validation and precise field extraction, recommended)
 EOF
     exit 0
 }
@@ -1155,89 +1138,57 @@ parse_args() {
             --errors)     ERROR_TEST=true; shift ;;
             --all)        STREAM_TEST=true; ERROR_TEST=true; shift ;;
             -h|--help)    print_usage ;;
-            *) echo "未知选项: $1"; print_usage ;;
+            *)            echo "Unknown option: $1"; print_usage ;;
         esac
     done
 }
 
-print_summary() {
-    echo ""
-    echo "============================================"
-    echo "           测试结果汇总"
-    echo "============================================"
-    echo -e "  ${GREEN}通过:             $PASS${NC}"
-    echo -e "  ${RED}失败:             $FAIL${NC}"
-    echo -e "  ${YELLOW}跳过:             $SKIP${NC}"
-    echo -e "  ${YELLOW}端点不存在:       $UNSUPPORTED${NC}"
-    echo -e "  ${MAGENTA}资源不存在:       $UNSUPPORTED_RESOURCE${NC}"
-    echo "--------------------------------------------"
-
-    if [ ${#FAILED_TESTS[@]} -gt 0 ]; then
-        echo "失败的测试:"
-        local t
-        for t in "${FAILED_TESTS[@]}"; do
-            echo -e "  ${RED}✗${NC} $t"
-        done
-    fi
-
-    if [ ${#SKIPPED_TESTS[@]} -gt 0 ]; then
-        echo "跳过的测试:"
-        local t
-        for t in "${SKIPPED_TESTS[@]}"; do
-            echo -e "  ${YELLOW}⊘${NC} $t"
-        done
-    fi
-
-    echo "============================================"
-    if [ "$FAIL" -eq 0 ]; then
-        echo -e "${GREEN}全部测试通过！${NC}"
-    else
-        echo -e "${RED}存在失败项，请检查。${NC}"
-    fi
-}
-
-main() {
-    parse_args "$@"
-
-    # ---- 提前探测模型 ----
+# Resolve the model: honor an explicit --model, otherwise probe /v1/models.
+resolve_model() {
     local model_source
     if [ -n "$MODEL" ]; then
-        model_source="手动指定"
+        model_source="manual"
     else
-        model_source="自动检测"
+        model_source="auto-detected"
         local probe_code
         probe_code=$(do_request GET "/v1/models")
         if [ "$probe_code" = "200" ]; then
             MODEL=$(extract_first_model_id "$RESP_FILE")
         fi
     fi
+    printf '%s' "$model_source"
+}
 
+print_banner() {
+    local model_source="$1"
     echo "============================================"
-    echo "  vLLM API 增强测试"
+    echo "  Enhanced vLLM API Test"
     echo "============================================"
-    echo "  服务地址: $BASE_URL"
+    echo "  Service:     $BASE_URL"
     if [ -n "$MODEL" ]; then
-        echo "  模型:     $MODEL ($model_source)"
+        echo "  Model:       $MODEL ($model_source)"
     else
-        echo "  模型:     未检测到"
+        echo "  Model:       not detected"
     fi
-    echo "  超时:     ${TIMEOUT}s"
-    echo "  流式测试: $([ "$STREAM_TEST" = true ] && echo '启用' || echo '禁用')"
-    echo "  错误测试: $([ "$ERROR_TEST" = true ] && echo '启用' || echo '禁用')"
+    echo "  Timeout:     ${TIMEOUT}s"
+    echo "  Stream test: $([ "$STREAM_TEST" = true ] && echo 'enabled' || echo 'disabled')"
+    echo "  Error test:  $([ "$ERROR_TEST" = true ] && echo 'enabled' || echo 'disabled')"
     if has_cmd jq; then
-        echo "  jq:       已安装（启用结构校验）"
+        echo "  jq:          installed (structure checks enabled)"
     else
-        echo "  jq:       未安装（跳过 JSON 结构校验）"
+        echo "  jq:          not installed (JSON structure checks skipped)"
     fi
-    echo "  截断阈值: ${VERBOSE_MAX_BYTES} bytes"
-    echo "  预测试超时: ${PRETEST_TIMEOUT}s"
+    echo "  Truncate at: ${VERBOSE_MAX_BYTES} bytes"
+    echo "  Pre-test timeout: ${PRETEST_TIMEOUT}s"
     echo "============================================"
     echo ""
+}
 
-    # ---- 预测试（先跑通健康检查 + 模型列表 + 基本对话） ----
+run_all_tests() {
+    # ---- Pre-test (health + models + basic chat first) ----
     pretest
 
-    log_info ">>> 基础端点 <<<"
+    log_info ">>> Basic endpoints <<<"
     test_health
     test_version
     test_models
@@ -1248,12 +1199,11 @@ main() {
     echo ""
 
     if [ -z "$MODEL" ]; then
-        log_skip "未指定模型且无法自动检测，跳过后续 API 测试"
-        print_summary
-        exit 0
+        log_skip "no model specified and auto-detection failed, skipping remaining API tests"
+        return 0
     fi
 
-    log_info ">>> OpenAI 兼容 API <<<"
+    log_info ">>> OpenAI-compatible API <<<"
     test_completions
     test_chat_completions
     test_chat_completions_batch
@@ -1265,12 +1215,12 @@ main() {
     test_audio_translations
     echo ""
 
-    log_info ">>> Anthropic 兼容 API <<<"
+    log_info ">>> Anthropic-compatible API <<<"
     test_anthropic_messages
     test_anthropic_count_tokens
     echo ""
 
-    log_info ">>> Cohere 兼容 API <<<"
+    log_info ">>> Cohere-compatible API <<<"
     test_cohere_embed
     test_rerank_aliases
     echo ""
@@ -1285,7 +1235,7 @@ main() {
     test_detokenize_roundtrip
     echo ""
 
-    log_info ">>> LoRA 动态加载/卸载 <<<"
+    log_info ">>> LoRA dynamic load / unload <<<"
     test_lora
     echo ""
 
@@ -1293,7 +1243,7 @@ main() {
     test_batch_files
     echo ""
 
-    log_info ">>> SageMaker / 其他端点 <<<"
+    log_info ">>> SageMaker / other endpoints <<<"
     test_sagemaker_invocations
     test_generative_scoring
     test_inference_generate
@@ -1304,6 +1254,54 @@ main() {
         test_error_paths
         echo ""
     fi
+}
+
+print_summary() {
+    echo ""
+    echo "============================================"
+    echo "           Test Result Summary"
+    echo "============================================"
+    echo -e "  ${GREEN}Passed:             $PASS${NC}"
+    echo -e "  ${RED}Failed:             $FAIL${NC}"
+    echo -e "  ${YELLOW}Skipped:            $SKIP${NC}"
+    echo -e "  ${YELLOW}Endpoint not found: $UNSUPPORTED${NC}"
+    echo -e "  ${MAGENTA}Resource missing:   $UNSUPPORTED_RESOURCE${NC}"
+    echo "--------------------------------------------"
+
+    if [ ${#FAILED_TESTS[@]} -gt 0 ]; then
+        echo "Failed tests:"
+        local t
+        for t in "${FAILED_TESTS[@]}"; do
+            echo -e "  ${RED}x${NC} $t"
+        done
+    fi
+
+    if [ ${#SKIPPED_TESTS[@]} -gt 0 ]; then
+        echo "Skipped tests:"
+        local t
+        for t in "${SKIPPED_TESTS[@]}"; do
+            echo -e "  ${YELLOW}o${NC} $t"
+        done
+    fi
+
+    echo "============================================"
+    if [ "$FAIL" -eq 0 ]; then
+        echo -e "${GREEN}All tests passed!${NC}"
+    else
+        echo -e "${RED}Some tests failed, please check.${NC}"
+    fi
+}
+
+main() {
+    parse_args "$@"
+
+    # ---- Resolve the model up front ----
+    local model_source
+    model_source=$(resolve_model)
+
+    print_banner "$model_source"
+
+    run_all_tests
 
     print_summary
 }

@@ -78,7 +78,17 @@ sudo apt install aria2
 aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/centos-vault/7.9.2009/isos/x86_64/CentOS-7-x86_64-Minimal-2009.iso"
 aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/centos-vault/8.5.2111/isos/x86_64/CentOS-8.5.2111-x86_64-dvd1.iso"
 aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/ubuntu-releases/20.04.6/ubuntu-20.04.6-live-server-amd64.iso"
+# new
 aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.openanolis.cn/anolis/7.9/isos/GA/x86_64/AnolisOS-7.9-Minimal-x86_64-dvd.iso"
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.openanolis.cn/anolis/23.5/isos/GA/x86_64/AnolisOS-23.5-x86_64-dvd.iso"
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/debian-cd/13.7.0/amd64/iso-dvd/debian-13.7.0-amd64-DVD-1.iso"
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/ubuntu-releases/24.04.5.1/ubuntu-24.04.5-live-server-amd64.iso"
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/openeuler/openEuler-24.03-LTS-SP4/ISO/x86_64/openEuler-24.03-LTS-SP4-x86_64-dvd.iso"
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/rocky/10.3/isos/x86_64/Rocky-10.3-x86_64-minimal.iso"
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/fedora/releases/45/Server/x86_64/iso/Fedora-Server-dvd-x86_64-45-1.4.iso"
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/freebsd/releases/ISO-IMAGES/15.1/FreeBSD-15.1-RELEASE-amd64-disc1.iso"
+aria2c -x 16 -s 16 -k 1M --file-allocation=none "https://mirrors.nju.edu.cn/almalinux/10.2/isos/x86_64_v2/AlmaLinux-10.2-x86_64_v2-minimal.iso"
+
 
 # 安装webkvm: https://github.com/Slaker19/webkvm.git
 curl -fsSL https://raw.githubusercontent.com/Slaker19/webkvm/main/scripts/install-webkvm.sh | sudo WEBKVM_PORT=18090 bash

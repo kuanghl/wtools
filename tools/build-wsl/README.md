@@ -222,11 +222,13 @@ KerberosAuthentication no
 
 # 4. 重启服务
 systemctl restart sshd
+sudo systemctl restart ssh    # Ubuntu 24.04.5 LTS
 
 # 5. ssh root 登录及密码验证开启 -- for ubuntu20.04
 PermitRootLogin yes
 PasswordAuthentication yes
 systemctl restart sshd
+sudo systemctl restart ssh    # Ubuntu 24.04.5 LTS
 ```
 
 ### 离线包安装和卸载机制

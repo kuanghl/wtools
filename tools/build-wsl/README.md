@@ -313,3 +313,47 @@ sudo ./centos8.5-app-deps.run uninstall
 ```
 
 > **CentOS 7.9** 安装 app 依赖后会自动配置 devtoolset-9 (GCC 9)，新会话自动激活，当前会话需执行 `source /opt/rh/devtoolset-9/enable`。
+
+### 系统换源
+
+```sh
+# AlmaLinux-10.2 换阿里源
+sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+      -e 's|^# baseurl=https://repo.almalinux.org|baseurl=https://mirrors.aliyun.com|g' \
+      -i.bak \
+      /etc/yum.repos.d/almalinux*.repo
+yum makecache        # 生成缓存
+yum repolist -v      # 查看源
+
+# debian 13.7.0
+sudo apt install vim -y
+
+sudo sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list                          # 软件源 
+sudo sed -i 's|http://security.debian.org|https://mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list     # 安全源 -- 主张不替换
+
+# # /etc/apt/sources.list 
+# deb https://mirrors.aliyun.com/debian/ trixie main contrib non-free non-free-firmware
+# deb-src https://mirrors.aliyun.com/debian/ trixie main contrib non-free non-free-firmware
+# deb https://mirrors.aliyun.com/debian/ trixie-updates main contrib non-free non-free-firmware
+# deb-src https://mirrors.aliyun.com/debian/ trixie-updates main contrib non-free non-free-firmware
+# deb https://mirrors.aliyun.com/debian/ trixie-backports main contrib non-free non-free-firmware
+# deb-src https://mirrors.aliyun.com/debian/ trixie-backports main contrib non-free non-free-firmware
+# deb https://mirrors.aliyun.com/debian-security/ trixie-security main contrib non-free non-free-firmware
+# deb-src https://mirrors.aliyun.com/debian-security/ trixie-security main contrib non-free non-free-firmware
+
+# /etc/apt/sources.list.d/debian.sources
+sudo vim /etc/apt/sources.list.d/debian.sources
+Types: deb deb-src
+URIs: https://mirrors.aliyun.com/debian
+Suites: trixie trixie-updates trixie-backports
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb deb-src
+# URIs: https://mirrors.aliyun.com/debian-security
+URIs: https://security.debian.org/debian-security
+Suites: trixie-security
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+sudo apt update
+```

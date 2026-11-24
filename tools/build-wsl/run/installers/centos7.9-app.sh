@@ -298,6 +298,27 @@ install_packages() {
     source /opt/rh/devtoolset-9/enable
 }
 
+revert_bashrc_devtoolset() {
+    # Inverse of the post-install append: once devtoolset-9 is erased, the line
+    # left in /etc/bashrc makes every new shell fail on a missing enable script.
+    # Rewritten through a temp file + `cat >` so /etc/bashrc keeps its inode,
+    # owner and mode. `grep -v` exit 1 (file reduced to nothing) is not an error.
+    local bashrc_line="source /opt/rh/devtoolset-9/enable"
+    [ -f /etc/bashrc ] || return 0
+    grep -qF "$bashrc_line" /etc/bashrc 2>/dev/null || return 0
+
+    local tmp rc=0
+    tmp=$(mktemp)
+    grep -vF "$bashrc_line" /etc/bashrc > "$tmp" || rc=$?
+    if [ "$rc" -le 1 ]; then
+        cat "$tmp" > /etc/bashrc
+        echo "  Reverted: removed devtoolset-9 activation from /etc/bashrc"
+    else
+        echo "  WARN: could not rewrite /etc/bashrc (grep exit $rc); left as-is"
+    fi
+    rm -f "$tmp"
+}
+
 uninstall_packages() {
     echo "============================================"
     echo "  ${DISTRO_NAME} - Uninstalling (soft)"
@@ -307,6 +328,7 @@ uninstall_packages() {
     if [ ! -f "$INSTALLED_FILE" ]; then
         echo "No installation record found."
         echo ""
+        revert_bashrc_devtoolset
         echo "Cleaning up orphaned dependencies..."
         pkg_autoremove
         echo ""
@@ -320,6 +342,7 @@ uninstall_packages() {
         echo "Installation record is empty."
         rm -f "$INSTALLED_FILE"
         echo ""
+        revert_bashrc_devtoolset
         echo "Uninstall complete."
         return
     fi
@@ -448,6 +471,10 @@ uninstall_packages() {
         done < "$SCRIPT_DIR/extra/.extra-manifest"
         rm -f /usr/bin/cmake /usr/bin/ctest /usr/bin/cpack
     fi
+
+    # Revert the post-install /etc/bashrc change
+    echo ""
+    revert_bashrc_devtoolset
 
     # Clean up orphaned dependencies
     echo ""

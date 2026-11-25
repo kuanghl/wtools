@@ -62,6 +62,7 @@ HEADER
 
     local size
     size=$(du -h "$run_file" | cut -f1)
+    ( cd "$work_dir" && md5sum "$output_name" > "${output_name}.md5sum" )
     echo "Created ${output_name} (${size})"
 }
 
@@ -96,10 +97,10 @@ main() {
         "$drv_pkg_dir" "${DISTRO_ID}-drv-deps.run" "${DISTRO_NAME} Driver Build Dependencies" \
         "$work_dir" ${DRV_EXTRA_TARS[@]+"${DRV_EXTRA_TARS[@]}"}
 
-    mv "$work_dir"/*.run "${SCRIPT_ROOT}/output/"
+    mv "$work_dir"/*.run "$work_dir"/*.run.md5sum "${SCRIPT_ROOT}/output/"
 
     echo "=== ${DISTRO_NAME} build complete [${build_id}] ==="
-    ls -lh "${SCRIPT_ROOT}/output/${DISTRO_ID}"-*.run
+    ls -lh "${SCRIPT_ROOT}/output/${DISTRO_ID}"-*.run "${SCRIPT_ROOT}/output/${DISTRO_ID}"-*.run.md5sum
 }
 
 main "$@"

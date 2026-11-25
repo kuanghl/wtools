@@ -41,6 +41,8 @@ wsl --terminate CentOS7     # 停止wsl
 | Ubuntu 24.04 | `ubuntu24.04-app-deps.run` | `ubuntu24.04-drv-deps.run` |
 | Debian 13 | `debian13-app-deps.run` | `debian13-drv-deps.run` |
 
+每个 `.run` 同时生成同名 `xx.run.md5sum`（位于 `run/output/`，记录里只含文件名），分发前后在 `.run` 所在目录执行 `md5sum -c xx.run.md5sum` 校验完整性。
+
 > CentOS 7.9 / CentOS 8.5 / Ubuntu 20.04 的 drv 包已把 kernel headers 按目标机 `uname -r` 固定版本。
 > Ubuntu 24.04 / Debian 13 目标机内核尚未确定，`config/*.conf` 中先用 meta 包（`linux-headers-generic` / `linux-headers-amd64`，跟随仓库最新）；确定 `uname -r` 后应改为具体包名并重新打包，否则安装时会因版本不匹配被跳过。
 > Debian 13 的版本化 headers 硬依赖同版本 `linux-image-*`，其 drv 包会连带整个内核镜像（约 108MB）。
